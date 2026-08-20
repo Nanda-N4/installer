@@ -1,12 +1,12 @@
 import socket, threading
 
-LISTEN_IP = '0.0.0.0'
-LISTEN_PORT = 80
-FORWARD_IP = '127.0.0.1'
-FORWARD_PORT = 143
+LISTEN_PORTS = [80, 143, 442, 8080]
+DROPBEAR_HOST = '127.0.0.1'
+DROPBEAR_PORT = 109
 BUFFER = 8192
 
-RESPONSE_101 = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+HTTP_METHODS = [b'GET', b'POST', b'HEAD', b'PUT', b'DELETE', b'CONNECT', b'OPTIONS', b'TRACE', b'PATCH']
+HTTP_101 = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
 
 def pipe(src, dst):
     try:
@@ -21,31 +21,47 @@ def pipe(src, dst):
         try: dst.close()
         except: pass
 
-def handle(client):
+def handle_client(client):
     try:
-        req = client.recv(BUFFER)
-        if not req:
+        initial_data = client.recv(BUFFER)
+        if not initial_data:
             client.close()
             return
-        client.sendall(RESPONSE_101)
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.connect((FORWARD_IP, FORWARD_PORT))
-        t1 = threading.Thread(target=pipe, args=(client, server), daemon=True)
-        t2 = threading.Thread(target=pipe, args=(server, client), daemon=True)
+        
+        target = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        target.connect((DROPBEAR_HOST, DROPBEAR_PORT))
+        
+        is_http = any(initial_data.startswith(m) for m in HTTP_METHODS)
+        if is_http:
+            client.sendall(HTTP_101)
+        else:
+            target.sendall(initial_data)
+            
+        t1 = threading.Thread(target=pipe, args=(client, target), daemon=True)
+        t2 = threading.Thread(target=pipe, args=(target, client), daemon=True)
         t1.start(); t2.start()
         t1.join(); t2.join()
     except:
         try: client.close()
         except: pass
 
-def main():
+def start_server(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind((LISTEN_IP, LISTEN_PORT))
+    s.bind(('0.0.0.0', port))
     s.listen(200)
     while True:
         c, _ = s.accept()
-        threading.Thread(target=handle, args=(c,), daemon=True).start()
+        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
+
+def main():
+    threads = []
+    for p in LISTEN_PORTS:
+        t = threading.Thread(target=start_server, args=(p,), daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
 
 if __name__ == '__main__':
     main()
