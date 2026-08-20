@@ -18,9 +18,9 @@ echo -e "${CYAN}╔════════════════════�
 echo -e "${CYAN}║${WHITE}          ★ N4 VPN SERVER INTERACTIVE INSTALLER ★        ${CYAN}║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
 
-# 1. Interactive Host / Domain Prompt
+# 1. Host / Domain Prompt
 echo -e "\n${YELLOW}--- [1/2] SSH WS / CDN DOMAIN CONFIGURATION ---${NC}"
-echo -e " VPS တွင် အသုံးပြုမည့် Domain (သို့မဟုတ်) Cloudflare Subdomain ထည့်ပါ။"
+echo -e " VPS တွင် အသုံးပြုမည့် Domain (သို့မဟုတ်) Subdomain ထည့်ပါ။"
 echo -e " မရှိပါက Enter နှိပ်ပါ (Server IP: ${GREEN}$MYIP${NC} ကို အလိုအလျောက် သုံးပါမည်)။"
 read -p " Enter Domain / IP [Default: $MYIP]: " input_domain
 
@@ -32,7 +32,7 @@ fi
 echo "$HOST_DOMAIN" > /etc/vps-domain.txt
 echo -e "${GREEN}[✔] Host Domain Configured:${NC} $HOST_DOMAIN"
 
-# 2. Interactive SlowDNS NS Prompt & Live Validator
+# 2. SlowDNS NS Setup Prompt
 echo -e "\n${YELLOW}--- [2/2] SLOWDNS PROTOCOL SETUP ---${NC}"
 read -p " SlowDNS ကို Server တွင် အသုံးပြုလိုပါသလား? [y/N]: " enable_dns
 ENABLE_SLOWDNS=0
@@ -40,32 +40,18 @@ ENABLE_SLOWDNS=0
 mkdir -p /etc/slowdns
 
 if [[ "$enable_dns" =~ ^[Yy]$ ]]; then
-    echo -e "\n Cloudflare တွင် ချိတ်ဆက်ထားသော NS Subdomain (e.g., ns1.yourdomain.com) ကို ထည့်ပါ။"
-    read -p " Enter NS Subdomain: " ns_input
+    read -p " Enter NS Subdomain (e.g., ns2.n4vpn.xyz): " ns_input
     
     if [ -n "$ns_input" ]; then
-        echo -e " [*] Verifying NS Subdomain resolution..."
-        # DNS Resolution Check
-        RESOLVED_IP=$(dig +short "$ns_input" 2>/dev/null | tail -n1)
-        if [ -z "$RESOLVED_IP" ]; then
-            RESOLVED_IP=$(getent hosts "$ns_input" | awk '{print $1}')
-        fi
-
-        if [ -n "$RESOLVED_IP" ]; then
-            echo -e "${GREEN}[✔] NS Subdomain is VALID & ACTIVE! (Points to: $RESOLVED_IP)${NC}"
-            echo "$ns_input" > /etc/slowdns/nsdomain.txt
-            ENABLE_SLOWDNS=1
-        else
-            echo -e "${RED}[!] WARNING: '$ns_input' is INVALID or Not Resolving yet!${NC}"
-            echo -e "${YELLOW}[!] SlowDNS will stay DISABLED for now. You can start it later via Menu.${NC}"
-            rm -f /etc/slowdns/nsdomain.txt
-        fi
+        echo "$ns_input" > /etc/slowdns/nsdomain.txt
+        ENABLE_SLOWDNS=1
+        echo -e "${GREEN}[✔] SlowDNS NS Configured:${NC} $ns_input"
     else
         echo -e "${YELLOW}[*] No NS Subdomain entered. SlowDNS skipped.${NC}"
         rm -f /etc/slowdns/nsdomain.txt
     fi
 else
-    echo -e "${YELLOW}[*] SlowDNS skipped. Server will run SSH WS & Dropbear only.${NC}"
+    echo -e "${YELLOW}[*] SlowDNS skipped.${NC}"
     rm -f /etc/slowdns/nsdomain.txt
 fi
 
@@ -141,7 +127,7 @@ Restart=always
 WantedBy=multi-user.target
 SERVICE
 
-# Configure SlowDNS Service if Verified
+# Configure SlowDNS Service if Enabled
 if [ $ENABLE_SLOWDNS -eq 1 ]; then
     cat << DNSSERVICE > /etc/systemd/system/slowdns.service
 [Unit]
@@ -182,8 +168,8 @@ echo -e "${GREEN}║${WHITE}            VPN SUITE INSTALLATION COMPLETE!        
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo -e " ${WHITE}Configured Host Domain :${NC} ${YELLOW}$HOST_DOMAIN${NC}"
 if [ $ENABLE_SLOWDNS -eq 1 ]; then
-    echo -e " ${WHITE}SlowDNS Status         :${NC} ${GREEN}● ACTIVE (${ns_input})${NC}"
+    echo -e " ${WHITE}SlowDNS Status         :${NC} ${GREEN}● ONLINE (${ns_input})${NC}"
 else
-    echo -e " ${WHITE}SlowDNS Status         :${NC} ${RED}○ DISABLED (Configure later via menu)${NC}"
+    echo -e " ${WHITE}SlowDNS Status         :${NC} ${RED}○ OFFLINE (Configure later via menu)${NC}"
 fi
 echo -e " Open panel anytime by typing: ${YELLOW}menu${NC}"
