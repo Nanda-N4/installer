@@ -146,7 +146,7 @@ case $opt in
     clear
     echo -e "${CYAN}╭══════════════════════════════════════════════════════════╮${NC}"
     echo -e "${CYAN}│${WHITE}                LIVE ACTIVE ONLINE SESSIONS               ${CYAN}│${NC}"
-    echo -e "${CYAN}╰──────────────────────────────────────────────────────────╯${NC}"
+    echo -e "${CYAN}╰══════════════════════════════════════════════════════════╯${NC}"
     printf "${WHITE}%-10s %-18s %-25s${NC}\n" "PID" "USER" "REMOTE IP:PORT"
     echo -e "────────────────────────────────────────────────────────────"
     lsof -i:109 -i:80 -i:143 | grep ESTABLISHED | awk '{printf "%-10s %-18s %-25s\n", $2, $3, $9}'
