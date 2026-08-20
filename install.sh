@@ -32,7 +32,7 @@ fi
 echo "$HOST_DOMAIN" > /etc/vps-domain.txt
 echo -e "${GREEN}[✔] Host Domain Configured:${NC} $HOST_DOMAIN"
 
-# 2. SlowDNS NS Setup Prompt
+# 2. SlowDNS NS Setup Prompt (Direct Run - No Verification)
 echo -e "\n${YELLOW}--- [2/2] SLOWDNS PROTOCOL SETUP ---${NC}"
 read -p " SlowDNS ကို Server တွင် အသုံးပြုလိုပါသလား? [y/N]: " enable_dns
 ENABLE_SLOWDNS=0
