@@ -42,8 +42,8 @@ echo -e "   ${GREEN}[4]${NC} Live Active Connections Monitor"
 echo -e "   ${GREEN}[5]${NC} Multi-Login Device Limiter (Auto-Kill Excess)"
 echo -e ""
 echo -e " ${BLUE}► [ PROTOCOLS & NETWORK ]${NC}"
-echo -e "   ${GREEN}[6]${NC} SlowDNS Control Center (NS Setup & Validator / Logs)"
-echo -e "   ${GREEN}[7]${NC} Change Server Domain / Cloudflare Hostname"
+echo -e "   ${GREEN}[6]${NC} SlowDNS Control Center (Setup NS / Logs)"
+echo -e "   ${GREEN}[7]${NC} Change Server Domain / Hostname"
 echo -e "   ${GREEN}[8]${NC} TCP BBR Optimizer & Restart All Services"
 echo -e ""
 echo -e "   ${RED}[0]${NC} Exit Panel"
@@ -146,7 +146,7 @@ case $opt in
     clear
     echo -e "${CYAN}╭══════════════════════════════════════════════════════════╮${NC}"
     echo -e "${CYAN}│${WHITE}                LIVE ACTIVE ONLINE SESSIONS               ${CYAN}│${NC}"
-    echo -e "${CYAN}╰══════════════════════════════════════════════════════════╯${NC}"
+    echo -e "${CYAN}╰──────────────────────────────────────────────────────────╯${NC}"
     printf "${WHITE}%-10s %-18s %-25s${NC}\n" "PID" "USER" "REMOTE IP:PORT"
     echo -e "────────────────────────────────────────────────────────────"
     lsof -i:109 -i:80 -i:143 | grep ESTABLISHED | awk '{printf "%-10s %-18s %-25s\n", $2, $3, $9}'
@@ -171,25 +171,17 @@ case $opt in
     echo -e " Current NS Subdomain: ${YELLOW}$SAVED_NS${NC}"
     echo -e " Current Status      : $STATUS_DNS"
     echo -e "────────────────────────────────────────────────────────────"
-    echo -e " [1] Configure NS Subdomain & Start SlowDNS (With Validator)"
+    echo -e " [1] Set NS Subdomain & Start SlowDNS"
     echo -e " [2] Stop / Disable SlowDNS"
     echo -e " [3] View Live Real-Time Logs"
     read -p " Select Option [1-3]: " dns_opt
     
     if [ "$dns_opt" -eq 1 ]; then
-        read -p " Enter NS Subdomain (e.g., ns1.domain.com): " new_ns
+        read -p " Enter NS Subdomain (e.g., ns2.n4vpn.xyz): " new_ns
         if [ -n "$new_ns" ]; then
-            echo -e " [*] Validating NS resolution..."
-            RESOLVED_IP=$(dig +short "$new_ns" 2>/dev/null | tail -n1)
-            if [ -z "$RESOLVED_IP" ]; then
-                RESOLVED_IP=$(getent hosts "$new_ns" | awk '{print $1}')
-            fi
-            
-            if [ -n "$RESOLVED_IP" ]; then
-                echo -e "${GREEN}[✔] NS is Verified & Online! Points to: $RESOLVED_IP${NC}"
-                echo "$new_ns" > /etc/slowdns/nsdomain.txt
-                fuser -k 53/udp 2>/dev/null
-                cat << DNSSERVICE > /etc/systemd/system/slowdns.service
+            echo "$new_ns" > /etc/slowdns/nsdomain.txt
+            fuser -k 53/udp 2>/dev/null
+            cat << DNSSERVICE > /etc/systemd/system/slowdns.service
 [Unit]
 Description=SlowDNS DNSTT Server Service
 After=network.target
@@ -205,13 +197,10 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 DNSSERVICE
-                systemctl daemon-reload
-                systemctl enable slowdns
-                systemctl restart slowdns
-                echo -e "${GREEN}[✔] SlowDNS Successfully Started! (● ONLINE)${NC}"
-            else
-                echo -e "${RED}[!] ERROR: Cannot resolve '$new_ns'. Please check Cloudflare NS record first!${NC}"
-            fi
+            systemctl daemon-reload
+            systemctl enable slowdns
+            systemctl restart slowdns
+            echo -e "${GREEN}[✔] SlowDNS Successfully Started with NS: $new_ns (● ONLINE)${NC}"
         fi
     elif [ "$dns_opt" -eq 2 ]; then
         systemctl stop slowdns
