@@ -1,9 +1,4 @@
 #!/bin/bash
-# ==========================================================
-#  ★ N4 VPN CONTROL Panel - FAST EDITION ★
-# ==========================================================
-
-# 1. Ultra-Fast Data Fetching (Zero Delay / No External Curl Lag)
 if [ ! -f /tmp/vps-cached-ip ]; then
     hostname -I | awk '{print $1}' > /tmp/vps-cached-ip
 fi
@@ -16,16 +11,13 @@ ONLINE_USERS=$(ss -tn '( sport = :80 or sport = :109 or sport = :143 )' 2>/dev/n
 SLOWDNS_PUB=$(cat /etc/slowdns/server.pub 2>/dev/null || echo "d4edeacb4704be514959de44ff1bc7f875d3403c406e728cb9ee948d5725997d")
 SAVED_NS=$(cat /etc/slowdns/nsdomain.txt 2>/dev/null || echo "OFFLINE")
 
-# Lightning Service State Checker
 WS_STATE=$(pgrep -f "ws-proxy.py" >/dev/null && echo "ONLINE" || echo "OFFLINE")
 DNS_STATE=$(pgrep -f "dnstt-server" >/dev/null && echo "ONLINE" || echo "OFFLINE")
 DOG_STATE=$(pgrep -f "vpn-watchdog" >/dev/null && echo "ACTIVE" || echo "INACTIVE")
 
-# RAM & Uptime Stats
 RAM_USE=$(free -m | awk '/Mem:/ { printf "%s/%s MB", $3, $2 }')
 UPTIME_SYS=$(uptime -p | sed 's/up //')
 
-# High-Tech Cyber Theme Palette
 C_PURPLE='\033[38;5;141m'
 C_CYAN='\033[38;5;51m'
 C_GREEN='\033[38;5;48m'
@@ -37,7 +29,6 @@ C_BLUE='\033[38;5;75m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# Dynamic LED Badge
 badge() {
     if [ "$1" == "ONLINE" ] || [ "$1" == "ACTIVE" ]; then
         echo -e "${C_GREEN}${BOLD}● $1${NC}"
@@ -50,8 +41,8 @@ clear
 echo -e "${C_CYAN}  ___   _ _  _     __   ______  _  _    "
 echo -e " | \ \ | | || |    \ \ / /  _ \| \| |   "
 echo -e " | |\ \| | || |_    \ V /| |_) | .\ |   "
-echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ ENTERPRISE ★${NC}"
-echo -e "            |_|          |_|            ${C_GRAY}Core Engine 2026${NC}"
+echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ Auto Script ★${NC}"
+echo -e "            |_|          |_|            ${C_GRAY} Script 2026${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}${C_WHITE}Domain / Host${NC} : ${C_GOLD}${HOST_DOMAIN}${NC}"
 echo -e " ${BOLD}${C_WHITE}IPv4 Address${NC}  : ${C_CYAN}${MYIP}${NC}        ${BOLD}${C_WHITE}RAM Usage${NC} : ${C_GREEN}${RAM_USE}${NC}"
@@ -74,7 +65,7 @@ echo -e ""
 echo -e " ${C_BLUE}${BOLD}〔 PROTOCOL & MAINTENANCE 〕${NC}"
 echo -e "  ${C_CYAN}${BOLD}[08]${NC} ${C_WHITE}SlowDNS Configuration${NC}  ${C_GRAY}→ Setup NS / Live Log Monitor${NC}"
 echo -e "  ${C_CYAN}${BOLD}[09]${NC} ${C_WHITE}Server Domain Setting${NC}  ${C_GRAY}→ Update domain or CDN host${NC}"
-echo -e "  ${C_CYAN}${BOLD}[10]${NC} ${C_WHITE}Emergency Server Reboot${NC}${C_GRAY}→ Flush firewall & restart all${NC}"
+echo -e "  ${C_CYAN}${BOLD}[10]${NC} ${C_WHITE}Emergency Server Flush${NC} ${C_GRAY}→ Flush firewall & restart all${NC}"
 echo -e ""
 echo -e "  ${C_RED}${BOLD}[00]${NC} ${C_WHITE}Exit Control Center${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
@@ -99,12 +90,12 @@ case $opt in
     fi
     
     exp=$(date -d "+$days days" +"%Y-%m-%d")
-    useradd -e $exp -s /bin/false -M $uname
-    echo "$uname:$pass" | chpasswd
+    PASS_HASH=$(openssl passwd -6 "$pass")
+    useradd -e $exp -s /bin/false -p "$PASS_HASH" -M $uname
 
     clear
     echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${C_CYAN}║${C_WHITE}${BOLD}              ★ N4 VPS PANEL ★               ${NC}${C_CYAN}║${NC}"
+    echo -e "${C_CYAN}║${C_WHITE}${BOLD}              ★ N4 VPN CLIENT CREDENTIALS ★               ${NC}${C_CYAN}║${NC}"
     echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo -e " ${BOLD}${C_WHITE}Host / Domain    :${NC} ${C_GOLD}$HOST_DOMAIN${NC}"
     echo -e " ${BOLD}${C_WHITE}Server IP        :${NC} ${C_WHITE}$MYIP${NC}"
@@ -135,7 +126,8 @@ case $opt in
     read -p " Enter Username: " target_user
     if ! id "$target_user" &>/dev/null; then echo -e "${C_RED}[!] User '$target_user' not found!${NC}"; exit 1; fi
     read -p " Enter New Password: " new_pass
-    echo "$target_user:$new_pass" | chpasswd
+    NEW_HASH=$(openssl passwd -6 "$new_pass")
+    usermod -p "$NEW_HASH" "$target_user"
     echo -e "${C_GREEN}[✔] Password updated successfully.${NC}"
     ;;
 4|04)
@@ -152,7 +144,7 @@ case $opt in
 5|05)
     clear
     echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${C_CYAN}║${C_WHITE}${BOLD}                 USER SUBSCRIBER LIST                 ${NC}${C_CYAN}║${NC}"
+    echo -e "${C_CYAN}║${C_WHITE}${BOLD}                 DATABASE SUBSCRIBER LIST                 ${NC}${C_CYAN}║${NC}"
     echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     printf "${BOLD}${C_WHITE}%-20s %-20s %-15s${NC}\n" "USERNAME" "EXPIRY DATE" "STATUS"
     echo -e "${C_PURPLE}────────────────────────────────────────────────────────────${NC}"
@@ -206,7 +198,7 @@ case $opt in
     read -p " Select Action [1-3]: " dns_opt
     
     if [ "$dns_opt" -eq 1 ]; then
-        read -p " Enter NS Subdomain (e.g., ns2.n4vpn.xyz): " new_ns
+        read -p " Enter NS Subdomain (e.g., nssg.nandavip.bond): " new_ns
         if [ -n "$new_ns" ]; then
             echo "$new_ns" > /etc/slowdns/nsdomain.txt
             fuser -k 53/udp 2>/dev/null
@@ -252,20 +244,20 @@ DNSSERVICE
     ;;
 10)
     echo -e "\n${C_GOLD}╭─── EMERGENCY HEALING & FLUSH ───╮${NC}"
-    echo -e " [*] Refreshing all firewall policies (1-65535)..."
     iptables -P INPUT ACCEPT
     iptables -P FORWARD ACCEPT
     iptables -P OUTPUT ACCEPT
     iptables -F
+    iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+    iptables -A INPUT -i lo -j ACCEPT
     iptables -A INPUT -p tcp --dport 1:65535 -j ACCEPT
     iptables -A INPUT -p udp --dport 1:65535 -j ACCEPT
     netfilter-persistent save >/dev/null 2>&1 || true
 
-    echo -e " [*] Restarting all core VPN engines..."
     systemctl restart dropbear ws-dropbear vpn-watchdog 2>/dev/null
     [ -f /etc/slowdns/nsdomain.txt ] && systemctl restart slowdns 2>/dev/null
     rm -f /tmp/vps-cached-ip
-    
     echo -e "${C_GREEN}[✔] All Services Restored & Ports Refreshed Successfully!${NC}"
     ;;
 0|00) exit 0 ;;
