@@ -1,43 +1,33 @@
 #!/bin/bash
 # ==========================================================
-#  ★ N4 VPS SSCRIPT SUITE - MULTI-CLOUD BULLETPROOF ★
-#  Tested & Fully Compatible: Vultr, Linode, AWS, Oracle
+#  ★ N4 VPS SCRIPT INSTALLER ★
 # ==========================================================
 
 export DEBIAN_FRONTEND=noninteractive
+export UCF_FORCE_CONFFOLD=1
 
-# ==========================================================
-# 0. PREVENT UBUNTU NEEDRESTART INTERRUPTIONS & SSH DROPS
-# ==========================================================
+# 0. DISABLE NEEDRESTART (UBUNTU 22.04/24.04 FIX)
 if [ -f /etc/needrestart/needrestart.conf ]; then
     sed -i "s/#\$nrconf{restart} = 'i';/\$nrconf{restart} = 'a';/" /etc/needrestart/needrestart.conf 2>/dev/null
     sed -i "s/\$nrconf{restart} = 'i';/\$nrconf{restart} = 'a';/" /etc/needrestart/needrestart.conf 2>/dev/null
 fi
-export UCF_FORCE_CONFFOLD=1
 
-# ==========================================================
-# 1. FIREWALL UNLOCK (PORTS 1-65535 & SSH GUARD)
-# ==========================================================
+# 1. IMMEDIATE SAFE FIREWALL UNLOCK
 iptables -P INPUT ACCEPT
 iptables -P FORWARD ACCEPT
 iptables -P OUTPUT ACCEPT
-
-iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-iptables -A INPUT -i lo -j ACCEPT
-
 iptables -F
 iptables -X
 iptables -t nat -F 2>/dev/null
 iptables -t nat -X 2>/dev/null
 
+# Allow Loopback, SSH, and Full TCP/UDP Range
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -A INPUT -p tcp --dport 1:65535 -j ACCEPT
 iptables -A INPUT -p udp --dport 1:65535 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 1:65535 -j ACCEPT
-iptables -A OUTPUT -p udp --dport 1:65535 -j ACCEPT
 
 if command -v ufw >/dev/null 2>&1; then
-    ufw allow 22/tcp >/dev/null 2>&1
     ufw allow 1:65535/tcp >/dev/null 2>&1
     ufw allow 1:65535/udp >/dev/null 2>&1
     ufw disable >/dev/null 2>&1
@@ -45,7 +35,7 @@ fi
 
 REPO_RAW="https://raw.githubusercontent.com/Nanda-N4/installer/main"
 
-# Color Palette
+# Color Definitions
 C_PURPLE='\033[38;5;141m'
 C_CYAN='\033[38;5;51m'
 C_GREEN='\033[38;5;48m'
@@ -63,14 +53,14 @@ clear
 echo -e "${C_CYAN}  ___   _ _  _     __   ______  _  _    "
 echo -e " | \ \ | | || |    \ \ / /  _ \| \| |   "
 echo -e " | |\ \| | || |_    \ V /| |_) | .\ |   "
-echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ Auto INSTALLER ★${NC}"
-echo -e "            |_|          |_|            ${C_GRAY}Zero Edition${NC}"
+echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ AUTO INSTALLER ★${NC}"
+echo -e "            |_|          |_|            ${C_GRAY}Zero-Error${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
-echo -e "${C_GREEN}[✔] Firewall Ports 1-65535 Unlocked (SSH Port 22 Guarded)${NC}"
+echo -e "${C_GREEN}[✔] Firewall Ports 1-65535 Fully Opened & Safe${NC}"
 
-# 2. System File Limits Optimization
-echo -e "\n${C_GOLD}[1/6] Tuning Kernel File Descriptors (Anti-Crash)...${NC}"
-cat << 'EOF' >> /etc/security/limits.conf
+# 2. TUNING KERNEL FILE LIMITS
+echo -e "\n${C_GOLD}[1/6] Tuning Kernel Limits...${NC}"
+cat << 'EOF' > /etc/security/limits.d/99-vpn.conf
 * soft nofile 65535
 * hard nofile 65535
 root soft nofile 65535
@@ -78,12 +68,10 @@ root hard nofile 65535
 EOF
 sysctl -w fs.file-max=65535 >/dev/null 2>&1
 
-# 3. Host / Domain Prompt
-echo -e "\n${C_GOLD}--- [2/6] SSH WS / CDN DOMAIN CONFIGURATION ---${NC}"
-echo -e " VPS တွင် အသုံးပြုမည့် Domain (သို့မဟုတ်) Cloudflare Subdomain ထည့်ပါ။"
-echo -e " မရှိပါက Enter နှိပ်ပါ (Server IP: ${C_GREEN}$MYIP${NC} ကို အလိုအလျောက် သုံးပါမည်)။"
-read -p " Enter Domain / IP [Default: $MYIP]: " input_domain
-
+# 3. DOMAIN PROMPT
+echo -e "\n${C_GOLD}--- [2/6] DOMAIN CONFIGURATION ---${NC}"
+echo -e " VPS တွင် အသုံးပြုမည့် Domain/IP [Default: ${C_GREEN}$MYIP${NC}]"
+read -p " Enter Domain / IP: " input_domain
 if [ -z "$input_domain" ]; then
     HOST_DOMAIN="$MYIP"
 else
@@ -91,33 +79,28 @@ else
 fi
 echo "$HOST_DOMAIN" > /etc/vps-domain.txt
 echo "$MYIP" > /tmp/vps-cached-ip
-echo -e "${C_GREEN}[✔] Host Domain Set:${NC} $HOST_DOMAIN"
+echo -e "${C_GREEN}[✔] Domain set to:${NC} $HOST_DOMAIN"
 
-# 4. SlowDNS NS Setup Prompt
-echo -e "\n${C_GOLD}--- [3/6] SLOWDNS PROTOCOL SETUP ---${NC}"
-read -p " SlowDNS ကို Server တွင် အသုံးပြုလိုပါသလား? [y/N]: " enable_dns
+# 4. SLOWDNS PROMPT
+echo -e "\n${C_GOLD}--- [3/6] SLOWDNS SETUP ---${NC}"
+read -p " SlowDNS ကို သုံးမည်လား? [y/N]: " enable_dns
 ENABLE_SLOWDNS=0
-
 mkdir -p /etc/slowdns
 
 if [[ "$enable_dns" =~ ^[Yy]$ ]]; then
-    read -p " Enter NS Subdomain (e.g., ns2.n4vpn.xyz): " ns_input
+    read -p " Enter NS Subdomain (e.g., nssg.nandavip.bond): " ns_input
     if [ -n "$ns_input" ]; then
         echo "$ns_input" > /etc/slowdns/nsdomain.txt
         ENABLE_SLOWDNS=1
-        echo -e "${C_GREEN}[✔] SlowDNS NS Set:${NC} $ns_input"
-    else
-        echo -e "${C_GOLD}[*] No NS entered. SlowDNS skipped.${NC}"
-        rm -f /etc/slowdns/nsdomain.txt
+        echo -e "${C_GREEN}[✔] SlowDNS NS set to:${NC} $ns_input"
     fi
-else
-    echo -e "${C_GOLD}[*] SlowDNS skipped.${NC}"
-    rm -f /etc/slowdns/nsdomain.txt
 fi
 
-# 5. Safely Free Port 53 (Without Breaking Vultr Network)
-echo -e "\n${C_GOLD}[4/6] Safely Liberating UDP Port 53...${NC}"
+# 5. SAFE PORT 53 FREEING
+echo -e "\n${C_GOLD}[4/6] Liberating Port 53...${NC}"
 systemctl stop slowdns ws-dropbear dropbear vpn-watchdog 2>/dev/null
+fuser -k 53/udp 2>/dev/null
+fuser -k 53/tcp 2>/dev/null
 
 if [ -f "/etc/systemd/resolved.conf" ]; then
     sed -i 's/#DNSStubListener=yes/DNSStubListener=no/' /etc/systemd/resolved.conf 2>/dev/null
@@ -125,15 +108,19 @@ if [ -f "/etc/systemd/resolved.conf" ]; then
     systemctl restart systemd-resolved 2>/dev/null
 fi
 
+# Ensure DNS resolution remains working
 if ! grep -q "1.1.1.1" /etc/resolv.conf 2>/dev/null; then
     echo "nameserver 1.1.1.1" >> /etc/resolv.conf
 fi
 
-fuser -k 53/udp 2>/dev/null
-fuser -k 53/tcp 2>/dev/null
+# 6. ESSENTIAL PACKAGES & AUTH PREPARATION
+echo -e "\n${C_GOLD}[5/6] Installing Packages & Setting Up Dependencies...${NC}"
+# Add valid non-login shell cleanly
+touch /etc/shells
+grep -qxF '/bin/false' /etc/shells || echo '/bin/false' >> /etc/shells
+grep -qxF '/usr/sbin/nologin' /etc/shells || echo '/usr/sbin/nologin' >> /etc/shells
 
-echo -e "\n${C_GOLD}[5/6] Installing Essential Packages & Preparing Dropbear...${NC}"
-
+# Pre-set Dropbear to Port 109 before apt install to avoid Port 22 collision
 mkdir -p /etc/default
 cat << 'DBCONF' > /etc/default/dropbear
 NO_START=0
@@ -144,10 +131,9 @@ DROPBEAR_RECEIVE_WINDOW=65536
 DBCONF
 
 apt-get update -y
-apt-get install -y dropbear python3 screen curl wget net-tools lsof jq iptables iptables-persistent bc dnsutils psmisc ca-certificates
-grep -qxF '/bin/false' /etc/shells || echo '/bin/false' >> /etc/shells
+apt-get install -y dropbear python3 python3-pip curl wget net-tools lsof jq iptables iptables-persistent bc dnsutils psmisc ca-certificates
 
-# Setup Banner
+# Generate Banner
 cat << 'EOF' > /etc/issue.net
 <p style="text-align: center;">
 <font color="#00ffff"><b>══════════════════════════════════════</b></font><br>
@@ -159,25 +145,26 @@ cat << 'EOF' > /etc/issue.net
 <font color="#ff00ff"><b>✖ NO DDOS / NO SPAM / NO FRAUD</b></font><br>
 <font color="#ff00ff"><b>✖ NO TORRENT / NO ILLEGAL ACTIVITIES</b></font><br>
 <font color="#00ffff"><b>══════════════════════════════════════</b></font><br>
-<font color="#38b6ff"><b>✈ Telegram Channel : </b></font><font color="#ffffff"><b>https://t.me/n4vpn</b></font><br>
-<font color="#38b6ff"><b>✈ Support Admin    : </b></font><font color="#ffffff"><b>https://t.me/n4nd404</b></font><br>
+<font color="#38b6ff"><b>✈ Telegram Channel : </b></font><font color="#fffff0"><b>https://t.me/n4vpn</b></font><br>
+<font color="#38b6ff"><b>✈ Support Admin    : </b></font><font color="#fffff0"><b>https://t.me/n4nd404</b></font><br>
 <font color="#00ffff"><b>══════════════════════════════════════</b></font>
 </p>
 EOF
 
-# Generate Dropbear Host Keys & Restart Cleanly
+# Setup Dropbear Host Keys Cleanly
 mkdir -p /etc/dropbear
-dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key 2>/dev/null
-dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key 2>/dev/null
-dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key 2>/dev/null
+dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1 || true
+dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key >/dev/null 2>&1 || true
+dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1 || true
 
+# Allow password auth for SSH/Dropbear
 sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null
-systemctl restart ssh sshd 2>/dev/null
+systemctl restart ssh sshd 2>/dev/null || true
 systemctl enable dropbear
 systemctl restart dropbear
 
-# 7. Fetch Components from GitHub & Deploy Core Engines
-echo -e "\n${C_GOLD}[6/6] Fetching Components & Initializing Services...${NC}"
+# 7. DOWNLOAD AND VERIFY ALL GITHUB BINARIES FIRST
+echo -e "\n${C_GOLD}[6/6] Fetching GitHub Components & Binding Services...${NC}"
 curl -sSL "${REPO_RAW}/ws-proxy.py" -o /usr/local/bin/ws-proxy.py
 chmod +x /usr/local/bin/ws-proxy.py
 
@@ -192,7 +179,7 @@ curl -sSL "${REPO_RAW}/menu.sh" -o /usr/local/bin/menu
 chmod +x /usr/local/bin/menu
 echo "alias menu='/usr/local/bin/menu'" >> ~/.bashrc
 
-# Systemd WebSocket
+# Deploy WebSocket Systemd Service
 cat << 'SERVICE' > /etc/systemd/system/ws-dropbear.service
 [Unit]
 Description=SSH & Payload WebSocket Proxy Engine
@@ -210,7 +197,7 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 SERVICE
 
-# Systemd SlowDNS
+# Deploy SlowDNS Service (If Enabled)
 if [ $ENABLE_SLOWDNS -eq 1 ]; then
     cat << DNSSERVICE > /etc/systemd/system/slowdns.service
 [Unit]
@@ -234,7 +221,7 @@ DNSSERVICE
     systemctl restart slowdns
 fi
 
-# Auto-Recovery Watchdog Daemon
+# Deploy Watchdog Daemon
 cat << 'EOF' > /usr/local/bin/vpn-watchdog.sh
 #!/bin/bash
 while true; do
@@ -271,18 +258,18 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
+# Activate All Services
 systemctl daemon-reload
 systemctl enable ws-dropbear vpn-watchdog
 systemctl restart ws-dropbear vpn-watchdog
 
-# Save Firewall Rules Permanently
+# Safe Iptables Persistence Saving
 mkdir -p /etc/iptables
 iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
-netfilter-persistent save >/dev/null 2>&1 || true
 
 clear
 echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${C_CYAN}║${C_WHITE}${BOLD}            N4 VPS Script INSTALLATION COMPLETE!          ${NC}${C_CYAN}║${NC}"
+echo -e "${C_CYAN}║${C_WHITE}${BOLD}            N4 VPS INSTALLATION COMPLETE!          ${NC}${C_CYAN}║${NC}"
 echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo -e " ${BOLD}${C_WHITE}Configured Host Domain :${NC} ${C_GOLD}$HOST_DOMAIN${NC}"
 if [ $ENABLE_SLOWDNS -eq 1 ]; then
@@ -290,7 +277,7 @@ if [ $ENABLE_SLOWDNS -eq 1 ]; then
 else
     echo -e " ${BOLD}${C_WHITE}SlowDNS Status         :${NC} ${C_RED}○ OFFLINE (Configure later in menu)${NC}"
 fi
-echo -e " ${BOLD}${C_WHITE}Firewall Port Control  :${NC} ${C_GREEN}● PORTS 1-65535 UNLOCKED (SSH GUARDED)${NC}"
+echo -e " ${BOLD}${C_WHITE}Firewall Port Control  :${NC} ${C_GREEN}● PORTS 1-65535 UNLOCKED & ACTIVE${NC}"
 echo -e " ${BOLD}${C_WHITE}Auto-Recovery Engine   :${NC} ${C_GREEN}● ACTIVE (Background Watchdog Running)${NC}"
 echo -e "${C_PURPLE}────────────────────────────────────────────────────────────${NC}"
 echo -e " Open control panel anytime by typing: ${C_GOLD}${BOLD}menu${NC}"
