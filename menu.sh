@@ -22,6 +22,7 @@ check_status() {
 
 STATUS_WS=$(check_status ws-dropbear)
 STATUS_DNS=$(check_status slowdns)
+STATUS_DOG=$(check_status vpn-watchdog)
 
 clear
 echo -e "${CYAN}╭══════════════════════════════════════════════════════════╮${NC}"
@@ -33,6 +34,7 @@ echo -e " ${WHITE}Total Users   :${NC} ${GREEN}$TOTAL_ACCOUNTS Accounts${NC}   $
 echo -e "${CYAN}├──────────────────────────────────────────────────────────┤${NC}"
 echo -e " ${WHITE}SSH & WS Engine (80, 143, 442, 8080)${NC}   : $STATUS_WS"
 echo -e " ${WHITE}SlowDNS Tunnel  (Port 53)${NC}             : $STATUS_DNS ${YELLOW}($SAVED_NS)${NC}"
+echo -e " ${WHITE}Auto-Recovery Watchdog${NC}                 : $STATUS_DOG"
 echo -e "${CYAN}├──────────────────────────────────────────────────────────┤${NC}"
 echo -e " ${BLUE}► [ USER MANAGEMENT ]${NC}"
 echo -e "   ${GREEN}[1]${NC} Create Account (Standard / 24-Hour Free Trial)"
@@ -44,7 +46,7 @@ echo -e ""
 echo -e " ${BLUE}► [ PROTOCOLS & NETWORK ]${NC}"
 echo -e "   ${GREEN}[6]${NC} SlowDNS Control Center (Setup NS / Logs)"
 echo -e "   ${GREEN}[7]${NC} Change Server Domain / Hostname"
-echo -e "   ${GREEN}[8]${NC} TCP BBR Optimizer & Restart All Services"
+echo -e "   ${GREEN}[8]${NC} System Maintenance (Unlock Ports / BBR / Restart)"
 echo -e ""
 echo -e "   ${RED}[0]${NC} Exit Panel"
 echo -e "${CYAN}╰══════════════════════════════════════════════════════════╯${NC}"
@@ -193,6 +195,7 @@ WorkingDirectory=/etc/slowdns
 ExecStart=/etc/slowdns/dnstt-server -udp 0.0.0.0:53 -privkey-file /etc/slowdns/server.key $new_ns 127.0.0.1:109
 Restart=always
 RestartSec=2
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -221,17 +224,32 @@ DNSSERVICE
     fi
     ;;
 8)
-    echo -e "\n${YELLOW}╭─── SERVER MAINTENANCE & OPTIMIZATION ───╮${NC}"
+    echo -e "\n${YELLOW}╭─── SERVER MAINTENANCE & HEALING ───╮${NC}"
+    # Re-apply full open firewall
+    iptables -P INPUT ACCEPT
+    iptables -P FORWARD ACCEPT
+    iptables -P OUTPUT ACCEPT
+    iptables -F
+    iptables -A INPUT -p tcp --dport 1:65535 -j ACCEPT
+    iptables -A INPUT -p udp --dport 1:65535 -j ACCEPT
+    netfilter-persistent save >/dev/null 2>&1 || true
+
+    # TCP BBR Booster
     if ! sysctl net.ipv4.tcp_congestion_control | grep -q "bbr"; then
         echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
         echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-        sysctl -p
+        sysctl -p >/dev/null 2>&1
         echo -e "${GREEN}[✔] TCP BBR Network Optimizer Activated.${NC}"
     else
         echo -e "${GREEN}[✔] TCP BBR Optimizer is already ACTIVE.${NC}"
     fi
-    systemctl restart dropbear ws-dropbear slowdns 2>/dev/null
-    echo -e "${GREEN}[✔] Core VPN Services successfully restarted.${NC}"
+
+    # Restart core stack + watchdog
+    systemctl restart dropbear ws-dropbear vpn-watchdog 2>/dev/null
+    [ -f /etc/slowdns/nsdomain.txt ] && systemctl restart slowdns 2>/dev/null
+
+    echo -e "${GREEN}[✔] Firewall Refreshed (1-65535 Unlocked).${NC}"
+    echo -e "${GREEN}[✔] Core VPN Services & Watchdog restarted successfully.${NC}"
     ;;
 0) exit 0 ;;
 *) echo -e "${RED}[!] Invalid selection.${NC}" ;;
