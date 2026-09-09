@@ -3,61 +3,80 @@ import socket, threading
 LISTEN_PORTS = [80, 143, 442, 8080]
 DROPBEAR_HOST = '127.0.0.1'
 DROPBEAR_PORT = 109
-BUFFER = 8192
+BUFFER_SIZE = 8192
 
-HTTP_METHODS = [b'GET', b'POST', b'HEAD', b'PUT', b'DELETE', b'CONNECT', b'OPTIONS', b'TRACE', b'PATCH']
-HTTP_101 = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+RESPONSE_101 = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
 
-def pipe(src, dst):
+def forward_stream(source, destination):
     try:
         while True:
-            data = src.recv(BUFFER)
-            if not data: break
-            dst.sendall(data)
-    except: pass
+            data = source.recv(BUFFER_SIZE)
+            if not data:
+                break
+            destination.sendall(data)
+    except Exception:
+        pass
     finally:
-        try: src.close()
+        try: source.close()
         except: pass
-        try: dst.close()
+        try: destination.close()
         except: pass
 
-def handle_client(client):
+def handle_client(client_socket):
+    target_socket = None
     try:
-        initial_data = client.recv(BUFFER)
+        client_socket.settimeout(10.0)
+        initial_data = client_socket.recv(BUFFER_SIZE)
         if not initial_data:
-            client.close()
+            client_socket.close()
             return
-        
-        target = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        target.connect((DROPBEAR_HOST, DROPBEAR_PORT))
-        
-        is_http = any(initial_data.startswith(m) for m in HTTP_METHODS)
-        if is_http:
-            client.sendall(HTTP_101)
-        else:
-            target.sendall(initial_data)
-            
-        t1 = threading.Thread(target=pipe, args=(client, target), daemon=True)
-        t2 = threading.Thread(target=pipe, args=(target, client), daemon=True)
-        t1.start(); t2.start()
-        t1.join(); t2.join()
-    except:
-        try: client.close()
-        except: pass
 
-def start_server(port):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(('0.0.0.0', port))
-    s.listen(200)
+        target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        target_socket.connect((DROPBEAR_HOST, DROPBEAR_PORT))
+
+        http_methods = (b'GET', b'POST', b'HEAD', b'PUT', b'DELETE', b'CONNECT', b'OPTIONS', b'TRACE', b'PATCH')
+        is_http_payload = any(initial_data.startswith(m) for m in http_methods) or b'HTTP/' in initial_data
+
+        if is_http_payload:
+            client_socket.sendall(RESPONSE_101)
+        else:
+            target_socket.sendall(initial_data)
+
+        client_socket.settimeout(None)
+        target_socket.settimeout(None)
+
+        t1 = threading.Thread(target=forward_stream, args=(client_socket, target_socket), daemon=True)
+        t2 = threading.Thread(target=forward_stream, args=(target_socket, client_socket), daemon=True)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+    except Exception:
+        pass
+    finally:
+        try: client_socket.close()
+        except: pass
+        if target_socket:
+            try: target_socket.close()
+            except: pass
+
+def start_listener(port):
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('0.0.0.0', port))
+    server.listen(500)
     while True:
-        c, _ = s.accept()
-        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
+        try:
+            client, _ = server.accept()
+            threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+        except Exception:
+            pass
 
 def main():
     threads = []
-    for p in LISTEN_PORTS:
-        t = threading.Thread(target=start_server, args=(p,), daemon=True)
+    for port in LISTEN_PORTS:
+        t = threading.Thread(target=start_listener, args=(port,), daemon=True)
         t.start()
         threads.append(t)
     for t in threads:
