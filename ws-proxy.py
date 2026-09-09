@@ -1,82 +1,72 @@
-import socket, threading
+import socket, select, threading
 
 LISTEN_PORTS = [80, 143, 442, 8080]
-DROPBEAR_HOST = '127.0.0.1'
-DROPBEAR_PORT = 109
+SSH_HOST = '127.0.0.1'
+SSH_PORT = 109
 BUFFER_SIZE = 8192
 
-RESPONSE_101 = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+# Clean Standard Handshake (Auto-Replace 101/200 OK Friendly)
+RESP_101 = b"HTTP/1.1 101 Switching Protocols\r\n\r\n"
 
-def forward_stream(source, destination):
+def handle_connection(client_sock, client_addr):
+    target_sock = None
     try:
-        while True:
-            data = source.recv(BUFFER_SIZE)
-            if not data:
-                break
-            destination.sendall(data)
-    except Exception:
-        pass
-    finally:
-        try: source.close()
-        except: pass
-        try: destination.close()
-        except: pass
-
-def handle_client(client_socket):
-    target_socket = None
-    try:
-        client_socket.settimeout(10.0)
-        initial_data = client_socket.recv(BUFFER_SIZE)
-        if not initial_data:
-            client_socket.close()
+        client_sock.settimeout(10.0)
+        initial = client_sock.recv(BUFFER_SIZE)
+        if not initial:
+            client_sock.close()
             return
 
-        target_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        target_socket.connect((DROPBEAR_HOST, DROPBEAR_PORT))
+        target_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        target_sock.connect((SSH_HOST, SSH_PORT))
 
-        http_methods = (b'GET', b'POST', b'HEAD', b'PUT', b'DELETE', b'CONNECT', b'OPTIONS', b'TRACE', b'PATCH')
-        is_http_payload = any(initial_data.startswith(m) for m in http_methods) or b'HTTP/' in initial_data
-
-        if is_http_payload:
-            client_socket.sendall(RESPONSE_101)
+        # Check if HTTP Request / Custom Payload
+        if b'HTTP/' in initial or b'Host:' in initial:
+            client_sock.sendall(RESP_101)
         else:
-            target_socket.sendall(initial_data)
+            target_sock.sendall(initial)
 
-        client_socket.settimeout(None)
-        target_socket.settimeout(None)
+        client_sock.settimeout(None)
+        target_sock.settimeout(None)
 
-        t1 = threading.Thread(target=forward_stream, args=(client_socket, target_socket), daemon=True)
-        t2 = threading.Thread(target=forward_stream, args=(target_socket, client_socket), daemon=True)
-        t1.start()
-        t2.start()
-        t1.join()
-        t2.join()
+        # Ultra-stable I/O multiplexer
+        sockets = [client_sock, target_sock]
+        while True:
+            r, _, x = select.select(sockets, [], sockets, 120)
+            if x or not r:
+                break
+            for s in r:
+                data = s.recv(BUFFER_SIZE)
+                if not data:
+                    return
+                other = target_sock if s is client_sock else client_sock
+                other.sendall(data)
 
     except Exception:
         pass
     finally:
-        try: client_socket.close()
+        try: client_sock.close()
         except: pass
-        if target_socket:
-            try: target_socket.close()
+        if target_sock:
+            try: target_sock.close()
             except: pass
 
-def start_listener(port):
+def start_server(port):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(('0.0.0.0', port))
-    server.listen(500)
+    server.listen(200)
     while True:
         try:
-            client, _ = server.accept()
-            threading.Thread(target=handle_client, args=(client,), daemon=True).start()
+            client, addr = server.accept()
+            threading.Thread(target=handle_connection, args=(client, addr), daemon=True).start()
         except Exception:
             pass
 
 def main():
     threads = []
     for port in LISTEN_PORTS:
-        t = threading.Thread(target=start_listener, args=(port,), daemon=True)
+        t = threading.Thread(target=start_server, args=(port,), daemon=True)
         t.start()
         threads.append(t)
     for t in threads:
