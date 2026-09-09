@@ -5,7 +5,6 @@ SSH_HOST = '127.0.0.1'
 SSH_PORT = 109
 BUFFER_SIZE = 8192
 
-# Clean Standard Handshake (Auto-Replace 101/200 OK Friendly)
 RESP_101 = b"HTTP/1.1 101 Switching Protocols\r\n\r\n"
 
 def handle_connection(client_sock, client_addr):
@@ -20,7 +19,6 @@ def handle_connection(client_sock, client_addr):
         target_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         target_sock.connect((SSH_HOST, SSH_PORT))
 
-        # Check if HTTP Request / Custom Payload
         if b'HTTP/' in initial or b'Host:' in initial:
             client_sock.sendall(RESP_101)
         else:
@@ -29,7 +27,6 @@ def handle_connection(client_sock, client_addr):
         client_sock.settimeout(None)
         target_sock.settimeout(None)
 
-        # Ultra-stable I/O multiplexer
         sockets = [client_sock, target_sock]
         while True:
             r, _, x = select.select(sockets, [], sockets, 120)
