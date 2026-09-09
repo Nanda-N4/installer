@@ -11,6 +11,7 @@ ONLINE_USERS=$(ss -tn '( sport = :80 or sport = :109 or sport = :143 )' 2>/dev/n
 SLOWDNS_PUB=$(cat /etc/slowdns/server.pub 2>/dev/null || echo "d4edeacb4704be514959de44ff1bc7f875d3403c406e728cb9ee948d5725997d")
 SAVED_NS=$(cat /etc/slowdns/nsdomain.txt 2>/dev/null || echo "OFFLINE")
 
+SSH_STATE=$(pgrep -x "sshd" >/dev/null && echo "ONLINE" || echo "OFFLINE")
 WS_STATE=$(pgrep -f "ws-proxy.py" >/dev/null && echo "ONLINE" || echo "OFFLINE")
 DNS_STATE=$(pgrep -f "dnstt-server" >/dev/null && echo "ONLINE" || echo "OFFLINE")
 DOG_STATE=$(pgrep -f "vpn-watchdog" >/dev/null && echo "ACTIVE" || echo "INACTIVE")
@@ -41,14 +42,15 @@ clear
 echo -e "${C_CYAN}  ___   _ _  _     __   ______  _  _    "
 echo -e " | \ \ | | || |    \ \ / /  _ \| \| |   "
 echo -e " | |\ \| | || |_    \ V /| |_) | .\ |   "
-echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ Auto Script ★${NC}"
-echo -e "            |_|          |_|            ${C_GRAY} Script 2026${NC}"
+echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ N4 AUTO SCRIPT ★${NC}"
+echo -e "            |_|          |_|            ${C_GRAY}Core Engine 2026${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}${C_WHITE}Domain / Host${NC} : ${C_GOLD}${HOST_DOMAIN}${NC}"
 echo -e " ${BOLD}${C_WHITE}IPv4 Address${NC}  : ${C_CYAN}${MYIP}${NC}        ${BOLD}${C_WHITE}RAM Usage${NC} : ${C_GREEN}${RAM_USE}${NC}"
 echo -e " ${BOLD}${C_WHITE}Subscribed${NC}    : ${C_GREEN}${TOTAL_ACCOUNTS} Users${NC}      ${BOLD}${C_WHITE}Active UI${NC} : ${C_CYAN}${ONLINE_USERS} Sessions${NC}"
 echo -e " ${BOLD}${C_WHITE}Uptime${NC}        : ${C_GRAY}${UPTIME_SYS}${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
+echo -e " ${BOLD}${C_WHITE}SSH Engine (Ports 22, 109)          ${NC} : $(badge $SSH_STATE)"
 echo -e " ${BOLD}${C_WHITE}SSH Multi-Proxy (80, 143, 442, 8080)${NC} : $(badge $WS_STATE)"
 echo -e " ${BOLD}${C_WHITE}SlowDNS Core Engine (UDP 53)       ${NC} : $(badge $DNS_STATE) ${C_GOLD}[$SAVED_NS]${NC}"
 echo -e " ${BOLD}${C_WHITE}Background Watchdog Auto-Healer    ${NC} : $(badge $DOG_STATE)"
@@ -65,7 +67,7 @@ echo -e ""
 echo -e " ${C_BLUE}${BOLD}〔 PROTOCOL & MAINTENANCE 〕${NC}"
 echo -e "  ${C_CYAN}${BOLD}[08]${NC} ${C_WHITE}SlowDNS Configuration${NC}  ${C_GRAY}→ Setup NS / Live Log Monitor${NC}"
 echo -e "  ${C_CYAN}${BOLD}[09]${NC} ${C_WHITE}Server Domain Setting${NC}  ${C_GRAY}→ Update domain or CDN host${NC}"
-echo -e "  ${C_CYAN}${BOLD}[10]${NC} ${C_WHITE}Emergency Server Flush${NC} ${C_GRAY}→ Flush firewall & restart all${NC}"
+echo -e "  ${C_CYAN}${BOLD}[10]${NC} ${C_WHITE}Emergency Server Flush${NC} ${C_GRAY}→ Refresh firewall & restart all${NC}"
 echo -e ""
 echo -e "  ${C_RED}${BOLD}[00]${NC} ${C_WHITE}Exit Control Center${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
@@ -104,6 +106,7 @@ case $opt in
     echo -e " ${BOLD}${C_WHITE}Active Expiry    :${NC} ${C_PURPLE}$exp ($days Days)${NC}"
     echo -e "${C_PURPLE}────────────────────────────────────────────────────────────${NC}"
     echo -e " ${BOLD}${C_WHITE}SSH / WS Ports   :${NC} 80, 143, 442, 8080"
+    echo -e " ${BOLD}${C_WHITE}SSH Direct Port  :${NC} 109, 22"
     echo -e " ${BOLD}${C_WHITE}SlowDNS Port     :${NC} 53"
     echo -e " ${BOLD}${C_WHITE}SlowDNS NS Domain:${NC} ${C_GOLD}$SAVED_NS${NC}"
     echo -e " ${BOLD}${C_WHITE}SlowDNS Key      :${NC} ${C_CYAN}$SLOWDNS_PUB${NC}"
@@ -166,7 +169,7 @@ case $opt in
 6|06)
     clear
     echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${C_CYAN}║${C_WHITE}${BOLD}              LIVE CONCURRENT TCP CONNECTIONS             ${NC}${C_CYAN}║${NC}"
+    echo -e "${C_CYAN}║${C_WHITE}${BOLD}              LIVE TCP CONNECTIONS             ${NC}${C_CYAN}║${NC}"
     echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     printf "${BOLD}${C_WHITE}%-10s %-18s %-25s${NC}\n" "PID" "USER" "REMOTE IP:PORT"
     echo -e "${C_PURPLE}────────────────────────────────────────────────────────────${NC}"
@@ -255,7 +258,8 @@ DNSSERVICE
     iptables -A INPUT -p udp --dport 1:65535 -j ACCEPT
     netfilter-persistent save >/dev/null 2>&1 || true
 
-    systemctl restart dropbear ws-dropbear vpn-watchdog 2>/dev/null
+    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null
+    systemctl restart ws-dropbear vpn-watchdog 2>/dev/null
     [ -f /etc/slowdns/nsdomain.txt ] && systemctl restart slowdns 2>/dev/null
     rm -f /tmp/vps-cached-ip
     echo -e "${C_GREEN}[✔] All Services Restored & Ports Refreshed Successfully!${NC}"
