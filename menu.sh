@@ -11,10 +11,11 @@ ONLINE_USERS=$(ss -tn '( sport = :80 or sport = :109 or sport = :143 )' 2>/dev/n
 SLOWDNS_PUB=$(cat /etc/slowdns/server.pub 2>/dev/null || echo "d4edeacb4704be514959de44ff1bc7f875d3403c406e728cb9ee948d5725997d")
 SAVED_NS=$(cat /etc/slowdns/nsdomain.txt 2>/dev/null || echo "OFFLINE")
 
-SSH_STATE=$(pgrep -x "sshd" >/dev/null && echo "ONLINE" || echo "OFFLINE")
-WS_STATE=$(pgrep -f "ws-proxy.py" >/dev/null && echo "ONLINE" || echo "OFFLINE")
-DNS_STATE=$(pgrep -f "dnstt-server" >/dev/null && echo "ONLINE" || echo "OFFLINE")
-DOG_STATE=$(pgrep -f "vpn-watchdog" >/dev/null && echo "ACTIVE" || echo "INACTIVE")
+PRIMARY_SSH=$( (systemctl is-active --quiet ssh || systemctl is-active --quiet sshd) && echo "ONLINE" || echo "OFFLINE" )
+VPN_SSH=$(systemctl is-active --quiet vpn-ssh && echo "ONLINE" || echo "OFFLINE")
+WS_STATE=$(systemctl is-active --quiet ws-dropbear && echo "ONLINE" || echo "OFFLINE")
+DNS_STATE=$(systemctl is-active --quiet slowdns && echo "ONLINE" || echo "OFFLINE")
+DOG_STATE=$(systemctl is-active --quiet vpn-watchdog && echo "ACTIVE" || echo "INACTIVE")
 
 RAM_USE=$(free -m | awk '/Mem:/ { printf "%s/%s MB", $3, $2 }')
 UPTIME_SYS=$(uptime -p | sed 's/up //')
@@ -42,7 +43,7 @@ clear
 echo -e "${C_CYAN}  ___   _ _  _     __   ______  _  _    "
 echo -e " | \ \ | | || |    \ \ / /  _ \| \| |   "
 echo -e " | |\ \| | || |_    \ V /| |_) | .\ |   "
-echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ N4 AUTO SCRIPT ★${NC}"
+echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ AUTO SCRIPT ★${NC}"
 echo -e "            |_|          |_|            ${C_GRAY}Core Engine 2026${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
 echo -e " ${BOLD}${C_WHITE}Domain / Host${NC} : ${C_GOLD}${HOST_DOMAIN}${NC}"
@@ -50,7 +51,8 @@ echo -e " ${BOLD}${C_WHITE}IPv4 Address${NC}  : ${C_CYAN}${MYIP}${NC}        ${B
 echo -e " ${BOLD}${C_WHITE}Subscribed${NC}    : ${C_GREEN}${TOTAL_ACCOUNTS} Users${NC}      ${BOLD}${C_WHITE}Active UI${NC} : ${C_CYAN}${ONLINE_USERS} Sessions${NC}"
 echo -e " ${BOLD}${C_WHITE}Uptime${NC}        : ${C_GRAY}${UPTIME_SYS}${NC}"
 echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
-echo -e " ${BOLD}${C_WHITE}SSH Engine (Ports 22, 109)          ${NC} : $(badge $SSH_STATE)"
+echo -e " ${BOLD}${C_WHITE}Primary SSH Server (Port 22)        ${NC} : $(badge $PRIMARY_SSH)"
+echo -e " ${BOLD}${C_WHITE}VPN-SSH Core Engine (Port 109)      ${NC} : $(badge $VPN_SSH)"
 echo -e " ${BOLD}${C_WHITE}SSH Multi-Proxy (80, 143, 442, 8080)${NC} : $(badge $WS_STATE)"
 echo -e " ${BOLD}${C_WHITE}SlowDNS Core Engine (UDP 53)       ${NC} : $(badge $DNS_STATE) ${C_GOLD}[$SAVED_NS]${NC}"
 echo -e " ${BOLD}${C_WHITE}Background Watchdog Auto-Healer    ${NC} : $(badge $DOG_STATE)"
@@ -246,7 +248,7 @@ DNSSERVICE
     fi
     ;;
 10)
-    echo -e "\n${C_GOLD}╭─── EMERGENCY HEALING & FLUSH ───╮${NC}"
+    echo -e "\n${C_GOLD}╭─── RESTART ALL SERVICES ───╮${NC}"
     iptables -P INPUT ACCEPT
     iptables -P FORWARD ACCEPT
     iptables -P OUTPUT ACCEPT
@@ -259,7 +261,7 @@ DNSSERVICE
     netfilter-persistent save >/dev/null 2>&1 || true
 
     systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null
-    systemctl restart ws-dropbear vpn-watchdog 2>/dev/null
+    systemctl restart vpn-ssh ws-dropbear vpn-watchdog 2>/dev/null
     [ -f /etc/slowdns/nsdomain.txt ] && systemctl restart slowdns 2>/dev/null
     rm -f /tmp/vps-cached-ip
     echo -e "${C_GREEN}[✔] All Services Restored & Ports Refreshed Successfully!${NC}"
