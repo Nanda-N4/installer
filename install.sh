@@ -1,25 +1,62 @@
 #!/bin/bash
+# ==========================================================
+#  ★ N4 VPS SERVER SETUP -  INSTALLER ★
+# ==========================================================
+
 export DEBIAN_FRONTEND=noninteractive
+
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
+iptables -P OUTPUT ACCEPT
+iptables -F
+iptables -X
+iptables -t nat -F
+iptables -t nat -X
+iptables -t mangle -F
+iptables -t mangle -X
+iptables -t raw -F
+iptables -t raw -X
+
+# Allow Full Port Range 1-65535 (TCP & UDP)
+iptables -A INPUT -p tcp --dport 1:65535 -j ACCEPT
+iptables -A INPUT -p udp --dport 1:65535 -j ACCEPT
+iptables -A OUTPUT -p tcp --dport 1:65535 -j ACCEPT
+iptables -A OUTPUT -p udp --dport 1:65535 -j ACCEPT
+
+# Disable UFW if active
+if command -v ufw >/dev/null 2>&1; then
+    ufw allow 1:65535/tcp >/dev/null 2>&1
+    ufw allow 1:65535/udp >/dev/null 2>&1
+    ufw disable >/dev/null 2>&1
+fi
 
 REPO_RAW="https://raw.githubusercontent.com/Nanda-N4/installer/main"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-WHITE='\033[1;37m'
-PURPLE='\033[0;35m'
+# Color Palette
+C_PURPLE='\033[38;5;141m'
+C_CYAN='\033[38;5;51m'
+C_GREEN='\033[38;5;48m'
+C_RED='\033[38;5;196m'
+C_GOLD='\033[38;5;220m'
+C_WHITE='\033[38;5;231m'
+C_GRAY='\033[38;5;244m'
+BOLD='\033[1m'
 NC='\033[0m'
 
 MYIP=$(curl -s4 ifconfig.me || curl -s4 icanhazip.com)
+[ -z "$MYIP" ] && MYIP=$(hostname -I | awk '{print $1}')
 
 clear
-echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║${WHITE}          ★ N4 VPN SERVER INTERACTIVE INSTALLER ★        ${CYAN}║${NC}"
-echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
+echo -e "${C_CYAN}  ___   _ _  _     __   ______  _  _    "
+echo -e " | \ \ | | || |    \ \ / /  _ \| \| |   "
+echo -e " | |\ \| | || |_    \ V /| |_) | .\ |   "
+echo -e " |_| \___|__   _|    \_/ |  __/|_|\_|   ${C_GOLD}${BOLD}★ ENTERPRISE INSTALLER ★${NC}"
+echo -e "            |_|          |_|            ${C_GRAY}Ultra-Reliable Core Suite${NC}"
+echo -e "${C_PURPLE}─────────────────────────────────────────────────────────────${NC}"
+echo -e "${C_GREEN}[✔] Firewall Ports 1-65535 Instantly Unlocked (Zero Lockout Risk)${NC}"
 
-# 1. System File Limits Tuning (Anti-Crash)
-echo -e "\n${YELLOW}[*] Tuning System Limits for Heavy Load...${NC}"
+# 1. System File Limits Tuning (Anti-Crash for High Concurrency)
+echo -e "\n${C_GOLD}[1/6] Optimizing Kernel & File Descriptors...${NC}"
 cat << 'EOF' >> /etc/security/limits.conf
 * soft nofile 65535
 * hard nofile 65535
@@ -28,10 +65,10 @@ root hard nofile 65535
 EOF
 sysctl -w fs.file-max=65535 >/dev/null 2>&1
 
-# 2. Host / Domain Prompt
-echo -e "\n${YELLOW}--- [1/2] SSH WS / CDN DOMAIN CONFIGURATION ---${NC}"
-echo -e " VPS တွင် အသုံးပြုမည့် Domain (သို့မဟုတ်) Subdomain ထည့်ပါ။"
-echo -e " မရှိပါက Enter နှိပ်ပါ (Server IP: ${GREEN}$MYIP${NC} ကို အလိုအလျောက် သုံးပါမည်)။"
+# 2. Interactive Host / Domain Configuration
+echo -e "\n${C_GOLD}--- [2/6] SSH WS / CDN DOMAIN CONFIGURATION ---${NC}"
+echo -e " VPS တွင် အသုံးပြုမည့် Domain (သို့မဟုတ်) Cloudflare Subdomain ထည့်ပါ။"
+echo -e " မရှိပါက Enter နှိပ်ပါ (Server IP: ${C_GREEN}$MYIP${NC} ကို အလိုအလျောက် သုံးပါမည်)။"
 read -p " Enter Domain / IP [Default: $MYIP]: " input_domain
 
 if [ -z "$input_domain" ]; then
@@ -40,10 +77,11 @@ else
     HOST_DOMAIN="$input_domain"
 fi
 echo "$HOST_DOMAIN" > /etc/vps-domain.txt
-echo -e "${GREEN}[✔] Host Domain Configured:${NC} $HOST_DOMAIN"
+echo "$MYIP" > /tmp/vps-cached-ip
+echo -e "${C_GREEN}[✔] Host Domain Set:${NC} $HOST_DOMAIN"
 
-# 3. SlowDNS NS Setup Prompt (Direct Run - No Restriction)
-echo -e "\n${YELLOW}--- [2/2] SLOWDNS PROTOCOL SETUP ---${NC}"
+# 3. Interactive SlowDNS Setup (Direct Run - No Interruption)
+echo -e "\n${C_GOLD}--- [3/6] SLOWDNS PROTOCOL SETUP ---${NC}"
 read -p " SlowDNS ကို Server တွင် အသုံးပြုလိုပါသလား? [y/N]: " enable_dns
 ENABLE_SLOWDNS=0
 
@@ -55,18 +93,18 @@ if [[ "$enable_dns" =~ ^[Yy]$ ]]; then
     if [ -n "$ns_input" ]; then
         echo "$ns_input" > /etc/slowdns/nsdomain.txt
         ENABLE_SLOWDNS=1
-        echo -e "${GREEN}[✔] SlowDNS NS Configured:${NC} $ns_input"
+        echo -e "${C_GREEN}[✔] SlowDNS NS Set:${NC} $ns_input"
     else
-        echo -e "${YELLOW}[*] No NS Subdomain entered. SlowDNS skipped.${NC}"
+        echo -e "${C_GOLD}[*] No NS entered. SlowDNS skipped.${NC}"
         rm -f /etc/slowdns/nsdomain.txt
     fi
 else
-    echo -e "${YELLOW}[*] SlowDNS skipped.${NC}"
+    echo -e "${C_GOLD}[*] SlowDNS skipped.${NC}"
     rm -f /etc/slowdns/nsdomain.txt
 fi
 
 # 4. Clean Up & Free Port 53
-echo -e "\n${YELLOW}[*] Freeing Port 53 & Stopping Old Services...${NC}"
+echo -e "\n${C_GOLD}[4/6] Freeing Port 53 & Stopping Competing Services...${NC}"
 systemctl stop slowdns ws-dropbear dropbear vpn-watchdog 2>/dev/null
 systemctl stop systemd-resolved 2>/dev/null
 systemctl disable systemd-resolved 2>/dev/null
@@ -79,14 +117,13 @@ echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 fuser -k 53/udp 2>/dev/null
 fuser -k 53/tcp 2>/dev/null
 
-# 5. Core Packages
-echo -e "${YELLOW}[*] Installing Core Packages & Tools...${NC}"
+# 5. Core Packages & Dependencies
+echo -e "${C_GOLD}[5/6] Installing Essential Packages & Netfilter...${NC}"
 apt-get update -y && apt-get upgrade -y
 apt-get install -y dropbear python3 screen curl wget net-tools lsof jq iptables iptables-persistent bc dnsutils psmisc ca-certificates
 grep -qxF '/bin/false' /etc/shells || echo '/bin/false' >> /etc/shells
 
-# 6. Banner Setup (With Telegram Contact)
-echo -e "${YELLOW}[*] Setting up VPN Banner...${NC}"
+# Setup Connected Banner
 cat << 'EOF' > /etc/issue.net
 <p style="text-align: center;">
 <font color="#00ffff"><b>══════════════════════════════════════</b></font><br>
@@ -104,8 +141,7 @@ cat << 'EOF' > /etc/issue.net
 </p>
 EOF
 
-# 7. Dropbear Internal Configuration (Port 109, Max CLI Increased)
-echo -e "${YELLOW}[*] Configuring High-Load Dropbear SSH...${NC}"
+# Dropbear Internal Configuration (Port 109, Max CLI Buffer)
 mkdir -p /etc/dropbear
 dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key 2>/dev/null
 dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key 2>/dev/null
@@ -123,8 +159,8 @@ sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd
 systemctl enable dropbear
 systemctl restart dropbear
 
-# 8. Fetch Components from GitHub
-echo -e "${YELLOW}[*] Downloading Components from GitHub...${NC}"
+# 6. Fetch Components from GitHub & Deploy Services
+echo -e "\n${C_GOLD}[6/6] Downloading Components & Initializing Services...${NC}"
 curl -sSL "${REPO_RAW}/ws-proxy.py" -o /usr/local/bin/ws-proxy.py
 chmod +x /usr/local/bin/ws-proxy.py
 
@@ -139,7 +175,7 @@ curl -sSL "${REPO_RAW}/menu.sh" -o /usr/local/bin/menu
 chmod +x /usr/local/bin/menu
 echo "alias menu='/usr/local/bin/menu'" >> ~/.bashrc
 
-# 9. Setup WebSocket Service with Auto-Restart
+# Configure WebSocket Systemd Engine
 cat << 'SERVICE' > /etc/systemd/system/ws-dropbear.service
 [Unit]
 Description=SSH & Payload WebSocket Proxy Engine
@@ -157,7 +193,7 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 SERVICE
 
-# 10. Setup SlowDNS Service with Auto-Restart
+# Configure SlowDNS Service if Enabled
 if [ $ENABLE_SLOWDNS -eq 1 ]; then
     cat << DNSSERVICE > /etc/systemd/system/slowdns.service
 [Unit]
@@ -181,22 +217,18 @@ DNSSERVICE
     systemctl restart slowdns
 fi
 
-# 11. Auto-Recovery Watchdog Daemon Service
-echo -e "${YELLOW}[*] Installing Auto-Recovery Watchdog...${NC}"
+# Deploy Auto-Recovery Watchdog Daemon
 cat << 'EOF' > /usr/local/bin/vpn-watchdog.sh
 #!/bin/bash
 while true; do
-    # Check Dropbear
     if ! pgrep -x "dropbear" > /dev/null; then
         systemctl restart dropbear 2>/dev/null
     fi
 
-    # Check WS-Proxy
     if ! systemctl is-active --quiet ws-dropbear; then
         systemctl restart ws-dropbear 2>/dev/null
     fi
 
-    # Check SlowDNS (if configured)
     if [ -f /etc/slowdns/nsdomain.txt ]; then
         if ! systemctl is-active --quiet slowdns; then
             fuser -k 53/udp 2>/dev/null
@@ -228,37 +260,22 @@ systemctl daemon-reload
 systemctl enable ws-dropbear vpn-watchdog
 systemctl restart ws-dropbear vpn-watchdog
 
-# 12. Full Firewall Clearance (Ports 1 - 65535 Opened)
-echo -e "${YELLOW}[*] Opening All Firewall Ports (1-65535 TCP & UDP)...${NC}"
-iptables -P INPUT ACCEPT
-iptables -P FORWARD ACCEPT
-iptables -P OUTPUT ACCEPT
-iptables -F
-iptables -X
-iptables -t nat -F
-iptables -t nat -X
-iptables -t mangle -F
-iptables -t mangle -X
-iptables -t raw -F
-iptables -t raw -X
-
-# Allow Full Range
-iptables -A INPUT -p tcp --dport 1:65535 -j ACCEPT
-iptables -A INPUT -p udp --dport 1:65535 -j ACCEPT
-
-# Save Iptables Rules permanently
+# Permanent Rules Saving
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
 netfilter-persistent save >/dev/null 2>&1 || true
 
 clear
-echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║${WHITE}           N4 VPS INSTALLATION COMPLETE!             ${GREEN}║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
-echo -e " ${WHITE}Configured Host Domain :${NC} ${YELLOW}$HOST_DOMAIN${NC}"
+echo -e "${C_CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
+echo -e "${C_CYAN}║${C_WHITE}${BOLD}            N4 VPS AUTO SCRIPT INSTALLATION COMPLETE!          ${NC}${C_CYAN}║${NC}"
+echo -e "${C_CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
+echo -e " ${BOLD}${C_WHITE}Configured Host Domain :${NC} ${C_GOLD}$HOST_DOMAIN${NC}"
 if [ $ENABLE_SLOWDNS -eq 1 ]; then
-    echo -e " ${WHITE}SlowDNS Status         :${NC} ${GREEN}● ONLINE (${ns_input})${NC}"
+    echo -e " ${BOLD}${C_WHITE}SlowDNS Status         :${NC} ${C_GREEN}● ONLINE (${ns_input})${NC}"
 else
-    echo -e " ${WHITE}SlowDNS Status         :${NC} ${RED}○ OFFLINE (Configure later via menu)${NC}"
+    echo -e " ${BOLD}${C_WHITE}SlowDNS Status         :${NC} ${C_RED}○ OFFLINE (Configure later in menu)${NC}"
 fi
-echo -e " ${WHITE}Firewall Status        :${NC} ${GREEN}● PORTS 1-65535 UNLOCKED${NC}"
-echo -e " ${WHITE}Auto-Recovery Engine   :${NC} ${GREEN}● ACTIVE (Self-Healing Enabled)${NC}"
-echo -e " Open panel anytime by typing: ${YELLOW}menu${NC}"
+echo -e " ${BOLD}${C_WHITE}Firewall Port Control  :${NC} ${C_GREEN}● PORTS 1-65535 UNLOCKED & PERSISTENT${NC}"
+echo -e " ${BOLD}${C_WHITE}Auto-Recovery Engine   :${NC} ${C_GREEN}● ACTIVE (Self-Healing Background Watchdog)${NC}"
+echo -e "${C_PURPLE}────────────────────────────────────────────────────────────${NC}"
+echo -e " Open control panel anytime by typing: ${C_GOLD}${BOLD}menu${NC}"
