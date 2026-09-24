@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+SCRIPT_VERSION="2026.09.24-r5"
 export DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1
 REPO_RAW="https://raw.githubusercontent.com/Nanda-N4/installer/main"
+fetch_repo(){
+  local file="$1" dest="$2"
+  curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 90 \
+    -H "Cache-Control: no-cache" \
+    "${REPO_RAW}/${file}?cb=$(date +%s%N)" -o "$dest"
+}
 N4_DIR=/etc/n4vpn; CONF=$N4_DIR/n4.conf
 C1='\033[38;5;51m'; C2='\033[38;5;48m'; C3='\033[38;5;220m'; C4='\033[38;5;231m'; C5='\033[38;5;244m'; CR='\033[38;5;196m'; B='\033[1m'; N='\033[0m'
 trap 'rc=$?; echo -e "${CR}[!] Failed at line $LINENO (exit $rc): ${BASH_COMMAND}${N}"' ERR
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 
-logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • MODERN INSTALLER 2026${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WebSocket • Dropbear • SlowDNS • Auto Recovery${N}        ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
+logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • MODERN INSTALLER 2026 • r5${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WebSocket • Dropbear • SlowDNS • Auto Recovery${N}        ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
 step(){ echo -e "\n${C3}${B}[$1]${N} ${C4}$2${N}"; }
 valid_port(){ [[ "$1" =~ ^[0-9]+$ ]] && ((1<=10#$1 && 10#$1<=65535)); }
-csv_has(){ [[ ",$1," == *",$2,"* ]]; }
 
 load_conf(){
   VPN_SSH_PORT=109; WS_PORTS="80,143,442,8080"; DROPBEAR_PORTS="443"; DEVICE_LIMIT_DEFAULT=1
@@ -49,7 +55,14 @@ validate_ports(){
   [[ $VPN_SSH_PORT != 22 ]] || { echo "Port 22 is reserved for Admin SSH"; exit 1; }
   valid_port "$VPN_SSH_PORT" || exit 1
   IFS=, read -ra a <<< "$WS_PORTS"; for p in "${a[@]}"; do valid_port "$p" || exit 1; [[ $p != 22 && $p != "$VPN_SSH_PORT" ]] || exit 1; done
-  IFS=, read -ra d <<< "$DROPBEAR_PORTS"; for p in "${d[@]}"; do valid_port "$p" || exit 1; [[ $p != 22 && $p != "$VPN_SSH_PORT" ]] || exit 1; csv_has "$WS_PORTS" "$p" && { echo "Port conflict: $p"; exit 1; }; done
+  IFS=, read -ra d <<< "$DROPBEAR_PORTS"
+  for p in "${d[@]}"; do
+    valid_port "$p" || { echo "Invalid Dropbear port: $p"; exit 1; }
+    [[ $p != 22 && $p != "$VPN_SSH_PORT" ]] || { echo "Reserved/conflicting Dropbear port: $p"; exit 1; }
+    case ",$WS_PORTS," in
+      *",$p,"*) echo "Port conflict: Dropbear $p is already used by WebSocket"; exit 1 ;;
+    esac
+  done
 }
 
 write_vpn_ssh(){
@@ -141,9 +154,9 @@ UNIT_EOF
 write_slowdns(){
   if [[ $SLOWDNS_ENABLED -eq 1 ]]; then
     mkdir -p /etc/slowdns
-    [[ -x /etc/slowdns/dnstt-server ]] || curl -fsSL "$REPO_RAW/dnstt-server" -o /etc/slowdns/dnstt-server
-    [[ -s /etc/slowdns/server.key ]] || curl -fsSL "$REPO_RAW/server.key" -o /etc/slowdns/server.key
-    [[ -s /etc/slowdns/server.pub ]] || curl -fsSL "$REPO_RAW/server.pub" -o /etc/slowdns/server.pub
+    [[ -x /etc/slowdns/dnstt-server ]] || fetch_repo dnstt-server /etc/slowdns/dnstt-server
+    [[ -s /etc/slowdns/server.key ]] || fetch_repo server.key /etc/slowdns/server.key
+    [[ -s /etc/slowdns/server.pub ]] || fetch_repo server.pub /etc/slowdns/server.pub
     chmod 755 /etc/slowdns/dnstt-server; chmod 600 /etc/slowdns/server.key; echo "$NS_DOMAIN" >/etc/slowdns/nsdomain.txt
     if [[ -f /etc/systemd/resolved.conf ]]; then grep -q '^DNSStubListener=' /etc/systemd/resolved.conf && sed -i 's/^DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf || echo 'DNSStubListener=no' >> /etc/systemd/resolved.conf; systemctl restart systemd-resolved 2>/dev/null || true; fi
     cat > /etc/systemd/system/slowdns.service <<DNS_EOF
@@ -216,9 +229,55 @@ chmod 644 /etc/profile.d/n4-menu.sh
 main(){
   logo; load_conf
   step 1/8 "Protecting Admin SSH TCP/22"; protect_22; echo -e "${C2}[✓] Existing firewall rules are preserved; TCP/22 is explicitly allowed.${N}"
-  step 2/8 "Server identity"; ip=$(curl -4fsS --max-time 4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}'); [[ -z $HOST_DOMAIN ]] && HOST_DOMAIN=$ip; read -r -p " Domain/IP [$HOST_DOMAIN]: " x; [[ -n $x ]] && HOST_DOMAIN=$x
-  step 3/8 "Ports"; read -r -p " VPN SSH [$VPN_SSH_PORT]: " x; [[ -n $x ]] && VPN_SSH_PORT=$x; read -r -p " WebSocket CSV [$WS_PORTS]: " x; [[ -n $x ]] && WS_PORTS=$x; read -r -p " Dropbear CSV [$DROPBEAR_PORTS]: " x; [[ -n $x ]] && DROPBEAR_PORTS=$x; validate_ports
-  step 4/8 "SlowDNS"; def=N; [[ $SLOWDNS_ENABLED -eq 1 ]] && def=Y; read -r -p " Enable SlowDNS? [$def]: " x; [[ -z $x ]] && x=$def; if [[ $x =~ ^[Yy]$ ]]; then SLOWDNS_ENABLED=1; [[ -f /etc/slowdns/nsdomain.txt ]] && NS_DOMAIN=$(cat /etc/slowdns/nsdomain.txt); read -r -p " NS domain [${NS_DOMAIN:-required}]: " x; [[ -n $x ]] && NS_DOMAIN=$x; [[ -n $NS_DOMAIN ]] || { echo "NS required"; exit 1; }; else SLOWDNS_ENABLED=0; NS_DOMAIN=""; fi; save_conf
+  step 2/8 "Server identity"
+  ip=$(curl -4fsS --max-time 4 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
+  [[ -n ${ip:-} ]] || ip="127.0.0.1"
+
+  echo -e "${C5}Default host: ${C4}$ip${N}"
+  read -r -p " Use a domain? [y/N]: " x
+  case "${x:-N}" in
+    y|Y|yes|YES|Yes)
+      while :; do
+        read -r -p " Domain: " x
+        x=${x#http://}; x=${x#https://}; x=${x%%/*}
+        if [[ -n $x && $x != *" "* ]]; then
+          HOST_DOMAIN=$x
+          break
+        fi
+        echo -e "${CR}[!] Please enter a valid domain, e.g. vpn.example.com${N}"
+      done
+      ;;
+    *) HOST_DOMAIN=$ip ;;
+  esac
+
+  step 3/8 "Default ports"
+  echo -e "${C2}[✓] VPN SSH   : ${VPN_SSH_PORT}${N}"
+  echo -e "${C2}[✓] WebSocket : ${WS_PORTS}${N}"
+  echo -e "${C2}[✓] Dropbear  : ${DROPBEAR_PORTS}${N}"
+  echo -e "${C5}    Ports can be changed later from the N4 menu.${N}"
+  validate_ports
+
+  step 4/8 "SlowDNS"
+  read -r -p " Install SlowDNS? [y/N]: " x
+  case "${x:-N}" in
+    y|Y|yes|YES|Yes)
+      SLOWDNS_ENABLED=1
+      while :; do
+        read -r -p " NS domain: " x
+        x=${x#http://}; x=${x#https://}; x=${x%%/*}
+        if [[ -n $x && $x != *" "* ]]; then
+          NS_DOMAIN=$x
+          break
+        fi
+        echo -e "${CR}[!] NS domain is required, e.g. ns.example.com${N}"
+      done
+      ;;
+    *)
+      SLOWDNS_ENABLED=0
+      NS_DOMAIN=""
+      ;;
+  esac
+  save_conf
   step 5/8 "Installing packages and tuning"; apt-get update -y; apt-get install -y openssh-server dropbear python3 curl wget ca-certificates jq bc iproute2 net-tools lsof psmisc dnsutils procps openssl iptables iptables-persistent util-linux
   cat >/etc/security/limits.d/99-n4vpn.conf <<'LIM_EOF'
 * soft nofile 262144
@@ -237,9 +296,31 @@ net.ipv4.tcp_keepalive_intvl = 30
 net.ipv4.tcp_keepalive_probes = 5
 SYS_EOF
   sysctl --system >/dev/null 2>&1 || true; ssh-keygen -A >/dev/null 2>&1 || true; /usr/sbin/sshd -t && { systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true; }
-  step 6/8 "Installing services"; systemctl disable --now ws-dropbear.service 2>/dev/null || true; rm -f /etc/systemd/system/ws-dropbear.service; touch /etc/shells; grep -qxF /bin/false /etc/shells || echo /bin/false >>/etc/shells; write_vpn_ssh; write_dropbear; write_slowdns; curl -fsSL "$REPO_RAW/ws-proxy.py" -o /usr/local/bin/ws-proxy.py; curl -fsSL "$REPO_RAW/menu.sh" -o /usr/local/bin/menu; chmod 755 /usr/local/bin/ws-proxy.py /usr/local/bin/menu; write_ws_unit; write_health; write_auto_menu
-  step 7/8 "Opening required local ports"; protect_22; allow_port "$VPN_SSH_PORT" tcp; IFS=, read -ra a <<< "$WS_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done; IFS=, read -ra a <<< "$DROPBEAR_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done; [[ $SLOWDNS_ENABLED -eq 1 ]] && allow_port 53 udp; iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
-  step 8/8 "Starting engines"; systemctl daemon-reload; systemctl enable --now vpn-ssh ws-proxy dropbear n4-healthcheck.timer; [[ $SLOWDNS_ENABLED -eq 1 ]] && systemctl enable --now slowdns || true; systemctl restart vpn-ssh ws-proxy dropbear; [[ $SLOWDNS_ENABLED -eq 1 ]] && systemctl restart slowdns || true
-  echo; echo -e "${C2}${B}INSTALLATION COMPLETE${N}"; echo "Host: $HOST_DOMAIN"; echo "Admin SSH: 22 (protected)"; echo "VPN SSH: $VPN_SSH_PORT"; echo "WebSocket: $WS_PORTS"; echo "Dropbear: $DROPBEAR_PORTS"; [[ $SLOWDNS_ENABLED -eq 1 ]] && echo "SlowDNS: UDP/53 • $NS_DOMAIN" || echo "SlowDNS: disabled"; echo; echo "Vultr Cloud Firewall must allow the same ports. Menu auto-opens on the next interactive root login."
+  step 6/8 "Installing services"; systemctl disable --now ws-dropbear.service 2>/dev/null || true; rm -f /etc/systemd/system/ws-dropbear.service; touch /etc/shells; grep -qxF /bin/false /etc/shells || echo /bin/false >>/etc/shells; write_vpn_ssh; write_dropbear; write_slowdns; fetch_repo ws-proxy.py /usr/local/bin/ws-proxy.py; fetch_repo menu.sh /usr/local/bin/menu; chmod 755 /usr/local/bin/ws-proxy.py /usr/local/bin/menu; write_ws_unit; write_health; write_auto_menu
+  step 7/8 "Opening required local ports"
+  protect_22
+  allow_port "$VPN_SSH_PORT" tcp
+  IFS=, read -ra a <<< "$WS_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done
+  IFS=, read -ra a <<< "$DROPBEAR_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done
+  if [[ $SLOWDNS_ENABLED -eq 1 ]]; then allow_port 53 udp; fi
+  iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
+
+  step 8/8 "Starting engines"
+  systemctl daemon-reload
+  systemctl enable --now vpn-ssh ws-proxy dropbear n4-healthcheck.timer
+  if [[ $SLOWDNS_ENABLED -eq 1 ]]; then systemctl enable --now slowdns || true; fi
+  systemctl restart vpn-ssh ws-proxy dropbear
+  if [[ $SLOWDNS_ENABLED -eq 1 ]]; then systemctl restart slowdns || true; fi
+
+  echo
+  echo -e "${C2}${B}INSTALLATION COMPLETE${N}"
+  echo "Host: $HOST_DOMAIN"
+  echo "Admin SSH: 22 (protected)"
+  echo "VPN SSH: $VPN_SSH_PORT"
+  echo "WebSocket: $WS_PORTS"
+  echo "Dropbear: $DROPBEAR_PORTS"
+  if [[ $SLOWDNS_ENABLED -eq 1 ]]; then echo "SlowDNS: UDP/53 • $NS_DOMAIN"; else echo "SlowDNS: disabled"; fi
+  echo
+  echo "Vultr Cloud Firewall must allow the same ports. Menu auto-opens on the next interactive root login."
 }
 main "$@"
