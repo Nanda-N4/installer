@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+N4_VERSION = '2026.09.24-r10'
 
 import asyncio
 import logging
@@ -118,7 +119,6 @@ async def http_payload_mode(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
-    """Terminate the HTTP/payload preface then tunnel raw SSH to VPN SSH backend."""
     backend_reader = backend_writer = None
     try:
         backend_reader, backend_writer = await asyncio.wait_for(
@@ -132,14 +132,12 @@ async def http_payload_mode(
                 b'Upgrade: websocket\r\n\r\n'
             )
         else:
-            # Generic HTTP Custom / injector payload response.
             writer.write(
                 b'HTTP/1.1 200 Connection Established\r\n'
                 b'Connection: keep-alive\r\n\r\n'
             )
         await writer.drain()
 
-        # The HTTP payload itself is intentionally consumed, not passed to sshd.
         await bridge(reader, writer, backend_reader, backend_writer)
     finally:
         await close_writer(backend_writer)
@@ -150,7 +148,6 @@ async def raw_dropbear_mode(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
-    """Pass a raw SSH connection through to loopback Dropbear."""
     backend_reader = backend_writer = None
     try:
         backend_reader, backend_writer = await asyncio.wait_for(
@@ -169,7 +166,6 @@ async def normal_ws_mode(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
-    # Existing WS/payload ports continue to terminate payload then tunnel to VPN SSH.
     if looks_http(first):
         await http_payload_mode(first, reader, writer)
         return
@@ -199,9 +195,6 @@ async def client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> 
         local = writer.get_extra_info('sockname')
         local_port = local[1] if local else 0
 
-        # On the hybrid port, HTTP injectors send a payload immediately, while many
-        # raw SSH clients wait for the server banner. A short classification window
-        # therefore lets one public port support both modes.
         if local_port == HYBRID_PORT:
             try:
                 first = await asyncio.wait_for(reader.read(65536), timeout=CLASSIFY_TIMEOUT)
