@@ -119,6 +119,7 @@ async def http_payload_mode(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
+    """Terminate the HTTP/payload preface then tunnel raw SSH to VPN SSH backend."""
     backend_reader = backend_writer = None
     try:
         backend_reader, backend_writer = await asyncio.wait_for(
@@ -166,6 +167,7 @@ async def normal_ws_mode(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
 ) -> None:
+
     if looks_http(first):
         await http_payload_mode(first, reader, writer)
         return

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-SCRIPT_VERSION="2026.09.24-r10"
+SCRIPT_VERSION="2026.09.24-r10.1-migratefix"
 export DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1
 REPO_RAW="https://raw.githubusercontent.com/Nanda-N4/installer/main"
 N4_DIR=/etc/n4vpn; CONF=$N4_DIR/n4.conf
@@ -9,7 +9,7 @@ trap 'rc=$?; echo -e "${CR}[!] Failed at line $LINENO (exit $rc): ${BASH_COMMAND
 [[ $EUID -eq 0 ]] || { echo 'Run as root'; exit 1; }
 
 fetch_repo(){ local f=$1 d=$2; curl -fL --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 90 -H 'Cache-Control: no-cache' "${REPO_RAW}/${f}?cb=$(date +%s%N)" -o "$d"; }
-logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPS • CORE INSTALLER 2026 • r10${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WS • Hybrid Dropbear • SlowDNS • Auto Recovery${N}      ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
+logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • CORE INSTALLER 2026 • r10.1${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WS • Hybrid Dropbear • SlowDNS • Auto Recovery${N}      ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
 step(){ echo -e "\n${C3}${B}[$1]${N} ${C4}$2${N}"; }
 valid_port(){ [[ ${1:-} =~ ^[0-9]+$ ]] && ((1<=10#$1 && 10#$1<=65535)); }
 

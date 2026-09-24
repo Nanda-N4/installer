@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-VERSION='2026.09.24-r10'
+VERSION='2026.09.24-r10.1-migratefix'
 REPO_RAW='https://raw.githubusercontent.com/Nanda-N4/installer/main'
 N4=/etc/n4vpn; CONF=$N4/n4.conf
 [[ $EUID -eq 0 ]] || { echo 'Run as root'; exit 1; }
@@ -15,7 +15,7 @@ detect(){
  AUTO_REBOOT=$(get_conf AUTO_REBOOT 1); HEALTH_FAIL_THRESHOLD=$(get_conf HEALTH_FAIL_THRESHOLD 5); HEALTH_REBOOT_COOLDOWN=$(get_conf HEALTH_REBOOT_COOLDOWN 21600)
  HOST_DOMAIN=$(get_conf HOST_DOMAIN ''); PUBLIC_IPV4=$(get_conf PUBLIC_IPV4 ''); SLOWDNS_ENABLED=$(get_conf SLOWDNS_ENABLED 0); NS_DOMAIN=$(get_conf NS_DOMAIN '')
  if [[ -f /etc/ssh/sshd_vpn_config ]]; then p=$(awk '/^Port /{print $2;exit}' /etc/ssh/sshd_vpn_config); [[ -n ${p:-} ]] && VPN_SSH_PORT=$p; fi
-
+ # On very old installs there is no n4.conf. Preserve public Dropbear ports when possible.
  if (( had_conf == 0 )) && [[ -f /etc/default/dropbear ]]; then
   legacy_db=$(grep -oE '(-p[[:space:]]+|DROPBEAR_PORT=)[0-9.:]+' /etc/default/dropbear 2>/dev/null | grep -oE '[0-9]+$' | awk '$1>=1&&$1<=65535' | paste -sd, -)
   [[ -n ${legacy_db:-} ]] && DROPBEAR_PORTS=$legacy_db
@@ -27,7 +27,7 @@ detect(){
  if [[ $SLOWDNS_ENABLED == 1 && -z $NS_DOMAIN && -f /etc/systemd/system/slowdns.service ]]; then NS_DOMAIN=$(sed -nE 's#.*-privkey-file [^ ]+ ([^ ]+) 127\.0\.0\.1:[0-9]+.*#\1#p' /etc/systemd/system/slowdns.service | head -n1); fi
  [[ -z $NS_DOMAIN ]] && SLOWDNS_ENABLED=0
 
- case ",$DROPBEAR_PORTS," in *",443,"*) ;; *) DROPBEAR_PORTS="443${DROPBEAR_PORTS:+,$DROPBEAR_PORTS}";; esac
+ DROPBEAR_PORTS=$(csv_remove_reserved "$DROPBEAR_PORTS")
 }
 save(){ mkdir -p "$N4/device-limits" "$N4/shares" /var/log/n4vpn /var/lib/n4vpn-health; cat >"$CONF" <<EOF
 VPN_SSH_PORT=$VPN_SSH_PORT
@@ -49,6 +49,84 @@ HEALTH_REBOOT_COOLDOWN=$HEALTH_REBOOT_COOLDOWN
 EOF
  chmod 600 "$CONF"; echo "$HOST_DOMAIN">/etc/vps-domain.txt; }
 allow(){ local p=$1 proto=${2:-tcp}; iptables -C INPUT -p "$proto" --dport "$p" -j ACCEPT 2>/dev/null || iptables -A INPUT -p "$proto" --dport "$p" -j ACCEPT 2>/dev/null || true; command -v ufw >/dev/null 2>&1 && ufw allow "$p/$proto" >/dev/null 2>&1 || true; }
+
+csv_remove_reserved(){
+ local csv=${1:-} out='' p
+ IFS=, read -ra arr <<<"$csv"
+ for p in "${arr[@]}"; do
+  p=${p//[[:space:]]/}
+  [[ $p =~ ^[0-9]+$ ]] || continue
+  (( p>=1 && p<=65535 )) || continue
+  [[ $p == "$VPN_SSH_PORT" || $p == "$HYBRID_PORT" || $p == 22 || $p == "$DROPBEAR_INTERNAL_PORT" ]] && continue
+  case ",$out," in *",$p,"*) ;; *) out="${out:+$out,}$p";; esac
+ done
+ printf '%s' "$out"
+}
+
+port_owner(){
+ local p=$1
+ ss -ltnp 2>/dev/null | awk -v p=":$p" '$4 ~ p"$" {print; exit}'
+}
+
+legacy_cleanup(){
+ echo '[migrate] Stopping legacy proxy/Dropbear processes safely...'
+
+ systemctl stop ws-proxy.service vpn-ssh.service dropbear.service 2>/dev/null || true
+
+ for svc in ws-dropbear.service websocket.service ws.service websocket-proxy.service vpn-watchdog.service; do
+  systemctl disable --now "$svc" >/dev/null 2>&1 || true
+ done
+
+ pkill -f '[w]s-proxy.py' 2>/dev/null || true
+ pkill -x dropbear 2>/dev/null || true
+ sleep 2
+
+ local line
+ line=$(port_owner "$VPN_SSH_PORT" || true)
+ if [[ -n $line ]]; then
+  if grep -qiE 'dropbear|ws-proxy\.py|python3' <<<"$line"; then
+   echo "[migrate] Releasing legacy listener on VPN SSH port $VPN_SSH_PORT"
+   if grep -qi dropbear <<<"$line"; then pkill -x dropbear 2>/dev/null || true; fi
+   if grep -qiE 'ws-proxy\.py|python3' <<<"$line"; then pkill -f '[w]s-proxy.py' 2>/dev/null || true; fi
+   sleep 2
+  fi
+ fi
+ line=$(port_owner "$VPN_SSH_PORT" || true)
+ if [[ -n $line ]]; then
+  echo "[ERROR] Port $VPN_SSH_PORT is still occupied by an unknown process:"
+  echo "$line"
+  echo 'Nothing was killed. Resolve this listener manually, then run the updater again.'
+  exit 20
+ fi
+}
+
+verify_layout(){
+ local bad=0 p
+ echo '[verify] Checking N4 listeners...'
+ if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$VPN_SSH_PORT$"; then
+  echo "[WARN] VPN SSH :$VPN_SSH_PORT is not listening"; bad=1
+ fi
+ if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$DROPBEAR_INTERNAL_PORT$"; then
+  echo "[WARN] Dropbear backend :$DROPBEAR_INTERNAL_PORT is not listening"; bad=1
+ fi
+ if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$HYBRID_PORT$"; then
+  echo "[WARN] Hybrid :$HYBRID_PORT is not listening"; bad=1
+ fi
+ IFS=, read -ra arr <<<"$WS_PORTS"
+ for p in "${arr[@]}"; do
+  [[ $p =~ ^[0-9]+$ ]] || continue
+  if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -Eq "(^|:)$p$"; then
+   echo "[WARN] WebSocket :$p is not listening"; bad=1
+  fi
+ done
+ if (( bad )); then
+  echo '[verify] One or more listeners are missing. Recent logs:'
+  systemctl --no-pager --full status vpn-ssh dropbear ws-proxy 2>/dev/null || true
+  return 1
+ fi
+ echo '[verify] Core listeners are healthy.'
+ return 0
+}
 write_units(){
  cat >/etc/systemd/system/vpn-ssh.service <<'EOF'
 [Unit]
@@ -173,7 +251,7 @@ WantedBy=timers.target
 EOF
 }
 main(){
- echo "N4 updater $VERSION"; b=$(backup); echo "Backup: $b"; detect; save
+ echo "N4 updater $VERSION"; b=$(backup); echo "Backup: $b"; detect; legacy_cleanup; save
  apt-get update -y >/dev/null; apt-get install -y openssh-server dropbear python3 curl openssl iptables iproute2 procps >/dev/null
  id -u n4share >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin n4share
  fetch menu.sh /usr/local/bin/menu; fetch ws-proxy.py /usr/local/bin/ws-proxy.py; fetch share-server.py /usr/local/bin/n4-share-server.py; fetch update.sh /usr/local/bin/n4-update; chmod 755 /usr/local/bin/menu /usr/local/bin/ws-proxy.py /usr/local/bin/n4-share-server.py /usr/local/bin/n4-update
@@ -219,7 +297,17 @@ EOF
  if [[ -d /etc/n4vpn/wireguard ]]; then systemctl disable --now wg-quick@wg0 2>/dev/null || true; fi
  systemctl disable --now vpn-watchdog.service 2>/dev/null||true; rm -f /etc/systemd/system/vpn-watchdog.service /usr/local/bin/vpn-watchdog.sh
  systemctl daemon-reload; systemctl enable n4-healthcheck.timer n4-cleanup.timer vpn-ssh ws-proxy dropbear n4-share >/dev/null 2>&1||true
- systemctl restart dropbear; systemctl restart vpn-ssh; systemctl restart ws-proxy; systemctl restart n4-share; systemctl enable --now n4-healthcheck.timer n4-cleanup.timer >/dev/null 2>&1||true; [[ $SLOWDNS_ENABLED == 1 ]] && systemctl enable --now slowdns >/dev/null 2>&1||true
- echo; echo 'Update/migration complete.'; echo 'Existing Linux users, domain, SlowDNS files and firewall rules were preserved.'; echo "Rollback backup: $b"; echo 'Run: menu'
+ systemctl reset-failed dropbear vpn-ssh ws-proxy 2>/dev/null || true
+ systemctl restart dropbear
+ sleep 1
+ systemctl restart vpn-ssh
+ sleep 1
+ systemctl restart ws-proxy
+ systemctl restart n4-share
+ systemctl enable --now n4-healthcheck.timer n4-cleanup.timer >/dev/null 2>&1||true
+ [[ $SLOWDNS_ENABLED == 1 ]] && systemctl enable --now slowdns >/dev/null 2>&1||true
+ sleep 2
+ verify_layout || true
+ echo; echo 'Update/migration complete.'; echo 'Existing Linux users, expiry, domain, SlowDNS files and firewall rules were preserved.'; echo 'Reserved ports were normalized: VPN SSH=109, Hybrid=443, Dropbear backend=1443.'; echo "Rollback backup: $b"; echo 'Run: menu'
 }
 main "$@"
