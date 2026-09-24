@@ -13,6 +13,8 @@ load(){
   VPN_SSH_PORT=109
   WS_PORTS='80,143,442,8080'
   DROPBEAR_PORTS='443'
+  HYBRID_PORT=443
+  DROPBEAR_INTERNAL_PORT=1443
   DEVICE_LIMIT_DEFAULT=1
   WS_MAX_CLIENTS=2048
   WS_IDLE_TIMEOUT=180
@@ -34,6 +36,8 @@ save(){
 VPN_SSH_PORT=$VPN_SSH_PORT
 WS_PORTS="$WS_PORTS"
 DROPBEAR_PORTS="$DROPBEAR_PORTS"
+HYBRID_PORT=$HYBRID_PORT
+DROPBEAR_INTERNAL_PORT=$DROPBEAR_INTERNAL_PORT
 DEVICE_LIMIT_DEFAULT=$DEVICE_LIMIT_DEFAULT
 WS_MAX_CLIENTS=$WS_MAX_CLIENTS
 WS_IDLE_TIMEOUT=$WS_IDLE_TIMEOUT
@@ -67,7 +71,7 @@ header(){
   peers=$(wg show wg0 peers 2>/dev/null | wc -l)
   clear
   echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"
-  echo -e "${C1}│${N} ${B}${C4}N4 VPN CONTROL CENTER${N} ${C5}• Core 2026 r7${N}                      ${C1}│${N}"
+  echo -e "${C1}│${N} ${B}${C4}N4 VPN CONTROL CENTER${N} ${C5}• Core 2026 r8${N}                      ${C1}│${N}"
   echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"
   printf ' %-10s ${C3}%-22s${N} %-8s ${C1}%s${N}\n' Host "$HOST_DOMAIN" IPv4 "$ip"
   printf ' %-10s ${C2}%-22s${N} %-8s %s\n' RAM "$ram" Users "$users"
@@ -76,7 +80,8 @@ header(){
   printf ' %-20s %-17b %s\n' 'Admin SSH :22' "$(badge "$(svc ssh)")" Protected
   printf ' %-20s %-17b %s\n' "VPN SSH :$VPN_SSH_PORT" "$(badge "$(svc vpn-ssh)")" Direct
   printf ' %-20s %-17b %s\n' WebSocket "$(badge "$(svc ws-proxy)")" "$WS_PORTS"
-  printf ' %-20s %-17b %s\n' Dropbear "$(badge "$(svc dropbear)")" "$DROPBEAR_PORTS"
+  printf ' %-20s %-17b %s\n' "Hybrid SSH :$HYBRID_PORT" "$(badge "$(svc ws-proxy)")" 'Direct + Payload'
+  printf ' %-20s %-17b %s\n' Dropbear "$(badge "$(svc dropbear)")" 'Hybrid backend + extra ports'
   printf ' %-20s %-17b %s\n' 'SlowDNS :53/udp' "$(badge "$(svc slowdns)")" "${NS_DOMAIN:-disabled}"
   printf ' %-20s %-17b %s\n' "WireGuard :$WG_PORT/udp" "$(badge "$(svc wg-quick@wg0)")" "$peers peer(s) • MTU $WG_MTU"
   echo -e "${CP}──────────────────────────────────────────────────────────────${N}"
@@ -87,9 +92,20 @@ checkport(){
   valid "$p" || { echo 'Invalid port.'; return 1; }
   [[ $p != 22 ]] || { echo 'TCP/22 is reserved for Admin SSH.'; return 1; }
   case "$t" in
-    vpn) has "$WS_PORTS" "$p" && { echo 'Conflict with WebSocket.'; return 1; }; has "$DROPBEAR_PORTS" "$p" && { echo 'Conflict with Dropbear.'; return 1; } ;;
-    ws) [[ $p != "$VPN_SSH_PORT" ]] || { echo 'Conflict with VPN SSH.'; return 1; }; has "$DROPBEAR_PORTS" "$p" && { echo 'Conflict with Dropbear.'; return 1; } ;;
-    drop) [[ $p != "$VPN_SSH_PORT" ]] || { echo 'Conflict with VPN SSH.'; return 1; }; has "$WS_PORTS" "$p" && { echo 'Conflict with WebSocket.'; return 1; } ;;
+    vpn)
+      [[ $p != "$HYBRID_PORT" ]] || { echo "TCP/$HYBRID_PORT is reserved for Direct + Payload hybrid."; return 1; }
+      has "$WS_PORTS" "$p" && { echo 'Conflict with WebSocket.'; return 1; }
+      has "$DROPBEAR_PORTS" "$p" && { echo 'Conflict with Dropbear.'; return 1; }
+      ;;
+    ws)
+      [[ $p != "$VPN_SSH_PORT" ]] || { echo 'Conflict with VPN SSH.'; return 1; }
+      [[ $p != "$HYBRID_PORT" ]] || { echo "TCP/$HYBRID_PORT is already the automatic hybrid payload port."; return 1; }
+      has "$DROPBEAR_PORTS" "$p" && { echo 'Conflict with Dropbear.'; return 1; }
+      ;;
+    drop)
+      [[ $p != "$VPN_SSH_PORT" ]] || { echo 'Conflict with VPN SSH.'; return 1; }
+      if [[ $p != "$HYBRID_PORT" ]] && has "$WS_PORTS" "$p"; then echo 'Conflict with WebSocket.'; return 1; fi
+      ;;
   esac
   return 0
 }
@@ -119,16 +135,25 @@ apply_ws(){
 
 apply_drop(){
   local args='' p
+  # The public hybrid port belongs to ws-proxy. Dropbear listens on loopback
+  # so ws-proxy can multiplex raw SSH and HTTP/WS payloads on the same port.
+  args+=" -p 127.0.0.1:$DROPBEAR_INTERNAL_PORT"
   IFS=, read -ra a <<<"$DROPBEAR_PORTS"
-  for p in "${a[@]}"; do args+=" -p $p"; allow_tcp "$p"; done
+  for p in "${a[@]}"; do
+    allow_tcp "$p"
+    [[ $p == "$HYBRID_PORT" ]] && continue
+    args+=" -p $p"
+  done
   cat >/etc/default/dropbear <<EOF2
 NO_START=0
 DROPBEAR_PORT=0
 DROPBEAR_EXTRA_ARGS="$args -w -g"
 DROPBEAR_BANNER="/etc/issue.net"
 EOF2
+  allow_tcp "$HYBRID_PORT"
   save
   systemctl restart dropbear
+  systemctl restart ws-proxy
   refresh_all_shares
 }
 
@@ -408,11 +433,13 @@ ports_menu(){
   while true; do
     header
     echo -e " ${CB}${B}PORT MANAGER${N}"
+    echo "  Hybrid TCP/$HYBRID_PORT = Dropbear Direct + HTTP/WS Payload"
+    echo
     echo "  [1] VPN SSH              $VPN_SSH_PORT"
     echo "  [2] Replace WS ports     $WS_PORTS"
     echo '  [3] Add WS port'
     echo '  [4] Remove WS port'
-    echo "  [5] Replace Dropbear     $DROPBEAR_PORTS"
+    echo "  [5] Replace Dropbear     $DROPBEAR_PORTS  (443 = Hybrid)"
     echo '  [6] Add Dropbear port'
     echo '  [7] Remove Dropbear port'
     echo '  [0] Back'
@@ -422,9 +449,9 @@ ports_menu(){
       2) read -r -p ' WS ports CSV: ' v; ok=1; IFS=, read -ra a<<<"$v"; for p in "${a[@]}"; do checkport "$p" ws || ok=0; done; ((ok)) && { WS_PORTS=$v; apply_ws; }; pause ;;
       3) read -r -p ' WS port: ' p; checkport "$p" ws || { pause; continue; }; has "$WS_PORTS" "$p" || WS_PORTS="$WS_PORTS,$p"; apply_ws; pause ;;
       4) read -r -p ' WS port: ' p; WS_PORTS=$(tr ',' '\n'<<<"$WS_PORTS"|grep -vx "$p"|paste -sd, -); [[ -n $WS_PORTS ]] || WS_PORTS=80; apply_ws; pause ;;
-      5) read -r -p ' Dropbear ports CSV: ' v; ok=1; IFS=, read -ra a<<<"$v"; for p in "${a[@]}"; do checkport "$p" drop || ok=0; done; ((ok)) && { DROPBEAR_PORTS=$v; apply_drop; }; pause ;;
+      5) read -r -p ' Dropbear ports CSV (443 is always kept): ' v; v="${v#,}"; has "$v" "$HYBRID_PORT" || v="$HYBRID_PORT${v:+,$v}"; ok=1; IFS=, read -ra a<<<"$v"; for p in "${a[@]}"; do checkport "$p" drop || ok=0; done; ((ok)) && { DROPBEAR_PORTS=$v; apply_drop; }; pause ;;
       6) read -r -p ' Dropbear port: ' p; checkport "$p" drop || { pause; continue; }; has "$DROPBEAR_PORTS" "$p" || DROPBEAR_PORTS="$DROPBEAR_PORTS,$p"; apply_drop; pause ;;
-      7) read -r -p ' Dropbear port: ' p; DROPBEAR_PORTS=$(tr ',' '\n'<<<"$DROPBEAR_PORTS"|grep -vx "$p"|paste -sd, -); [[ -n $DROPBEAR_PORTS ]] || DROPBEAR_PORTS=443; apply_drop; pause ;;
+      7) read -r -p ' Dropbear port: ' p; if [[ $p == "$HYBRID_PORT" ]]; then echo " TCP/$HYBRID_PORT is the fixed Direct + Payload hybrid port and cannot be removed."; else DROPBEAR_PORTS=$(tr ',' '\n'<<<"$DROPBEAR_PORTS"|grep -vx "$p"|paste -sd, -); has "$DROPBEAR_PORTS" "$HYBRID_PORT" || DROPBEAR_PORTS="$HYBRID_PORT${DROPBEAR_PORTS:+,$DROPBEAR_PORTS}"; apply_drop; fi; pause ;;
       0) return ;;
     esac
   done

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-SCRIPT_VERSION="2026.09.24-r7"
+SCRIPT_VERSION="2026.09.24-r8"
 export DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1
 REPO_RAW="https://raw.githubusercontent.com/Nanda-N4/installer/main"
 fetch_repo(){
@@ -14,12 +14,12 @@ C1='\033[38;5;51m'; C2='\033[38;5;48m'; C3='\033[38;5;220m'; C4='\033[38;5;231m'
 trap 'rc=$?; echo -e "${CR}[!] Failed at line $LINENO (exit $rc): ${BASH_COMMAND}${N}"' ERR
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 
-logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • MODERN INSTALLER 2026 • r7${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WebSocket • Dropbear • SlowDNS • Auto Recovery${N}        ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
+logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • MODERN INSTALLER 2026 • r8${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WebSocket • Dropbear • SlowDNS • Auto Recovery${N}        ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
 step(){ echo -e "\n${C3}${B}[$1]${N} ${C4}$2${N}"; }
 valid_port(){ [[ "$1" =~ ^[0-9]+$ ]] && ((1<=10#$1 && 10#$1<=65535)); }
 
 load_conf(){
-  VPN_SSH_PORT=109; WS_PORTS="80,143,442,8080"; DROPBEAR_PORTS="443"; DEVICE_LIMIT_DEFAULT=1
+  VPN_SSH_PORT=109; WS_PORTS="80,143,442,8080"; DROPBEAR_PORTS="443"; HYBRID_PORT=443; DROPBEAR_INTERNAL_PORT=1443; DEVICE_LIMIT_DEFAULT=1
   WS_MAX_CLIENTS=2048; WS_IDLE_TIMEOUT=180; HOST_DOMAIN=""; SLOWDNS_ENABLED=0; NS_DOMAIN=""; WG_PORT=550; WG_MTU=1280; PUBLIC_IPV4=""; SHARE_PORT=8880
   [[ -f $CONF ]] && source "$CONF" || true
   if [[ -z "$HOST_DOMAIN" && -f /etc/vps-domain.txt ]]; then
@@ -33,6 +33,8 @@ save_conf(){
 VPN_SSH_PORT=$VPN_SSH_PORT
 WS_PORTS="$WS_PORTS"
 DROPBEAR_PORTS="$DROPBEAR_PORTS"
+HYBRID_PORT=$HYBRID_PORT
+DROPBEAR_INTERNAL_PORT=$DROPBEAR_INTERNAL_PORT
 DEVICE_LIMIT_DEFAULT=$DEVICE_LIMIT_DEFAULT
 WS_MAX_CLIENTS=$WS_MAX_CLIENTS
 WS_IDLE_TIMEOUT=$WS_IDLE_TIMEOUT
@@ -124,7 +126,15 @@ UNIT_EOF
 }
 
 write_dropbear(){
-  local args=""; IFS=, read -ra a <<< "$DROPBEAR_PORTS"; for p in "${a[@]}"; do args+=" -p $p"; done
+  local args="" p
+  # TCP/$HYBRID_PORT is owned by ws-proxy so it can accept both raw SSH and HTTP/WS payloads.
+  # Dropbear for that public port listens only on loopback at DROPBEAR_INTERNAL_PORT.
+  args+=" -p 127.0.0.1:$DROPBEAR_INTERNAL_PORT"
+  IFS=, read -ra a <<< "$DROPBEAR_PORTS"
+  for p in "${a[@]}"; do
+    [[ $p == "$HYBRID_PORT" ]] && continue
+    args+=" -p $p"
+  done
   cat > /etc/default/dropbear <<DROP_EOF
 NO_START=0
 DROPBEAR_PORT=0
@@ -137,8 +147,8 @@ write_ws_unit(){
 cat > /etc/systemd/system/ws-proxy.service <<'UNIT_EOF'
 [Unit]
 Description=N4 Async WebSocket SSH Proxy
-After=network-online.target vpn-ssh.service
-Wants=network-online.target
+After=network-online.target vpn-ssh.service dropbear.service
+Wants=network-online.target dropbear.service
 Requires=vpn-ssh.service
 [Service]
 Type=simple
@@ -193,7 +203,7 @@ check(){ timeout 2 bash -c "</dev/tcp/127.0.0.1/$2" >/dev/null 2>&1 || systemctl
 systemctl is-active --quiet vpn-ssh || systemctl restart vpn-ssh >/dev/null 2>&1 || true
 check vpn-ssh "${VPN_SSH_PORT:-109}"
 [[ -n ${WS_PORTS:-} ]] && check ws-proxy "${WS_PORTS%%,*}"
-[[ -n ${DROPBEAR_PORTS:-} ]] && check dropbear "${DROPBEAR_PORTS%%,*}"
+check dropbear "${DROPBEAR_INTERNAL_PORT:-1443}"
 [[ ${SLOWDNS_ENABLED:-0} == 1 ]] && systemctl is-active --quiet slowdns || { [[ ${SLOWDNS_ENABLED:-0} == 1 ]] && systemctl restart slowdns >/dev/null 2>&1 || true; }
 HEALTH_EOF
 chmod 755 /usr/local/sbin/n4-healthcheck
@@ -326,6 +336,7 @@ main(){
   step 3/8 "Default ports"
   echo -e "${C2}[✓] VPN SSH   : ${VPN_SSH_PORT}${N}"
   echo -e "${C2}[✓] WebSocket : ${WS_PORTS}${N}"
+  echo -e "${C2}[✓] Hybrid    : ${HYBRID_PORT}/tcp (Dropbear Direct + HTTP/WS Payload)${N}"
   echo -e "${C2}[✓] Dropbear  : ${DROPBEAR_PORTS}${N}"
   echo -e "${C2}[✓] WireGuard: UDP/${WG_PORT} • MTU ${WG_MTU}${N}"
   echo -e "${C5}    Ports can be changed later from the N4 menu.${N}"
@@ -378,6 +389,7 @@ SYS_EOF
   allow_port "$VPN_SSH_PORT" tcp
   IFS=, read -ra a <<< "$WS_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done
   IFS=, read -ra a <<< "$DROPBEAR_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done
+  allow_port "$HYBRID_PORT" tcp
   if [[ $SLOWDNS_ENABLED -eq 1 ]]; then allow_port 53 udp; fi
   allow_port "$WG_PORT" udp
   allow_port "$SHARE_PORT" tcp
