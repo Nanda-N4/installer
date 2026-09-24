@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-SCRIPT_VERSION="2026.09.24-r5"
+SCRIPT_VERSION="2026.09.24-r6"
 export DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1
 REPO_RAW="https://raw.githubusercontent.com/Nanda-N4/installer/main"
 fetch_repo(){
@@ -14,13 +14,13 @@ C1='\033[38;5;51m'; C2='\033[38;5;48m'; C3='\033[38;5;220m'; C4='\033[38;5;231m'
 trap 'rc=$?; echo -e "${CR}[!] Failed at line $LINENO (exit $rc): ${BASH_COMMAND}${N}"' ERR
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 
-logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • MODERN INSTALLER 2026 • r5${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WebSocket • Dropbear • SlowDNS • Auto Recovery${N}        ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
+logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • MODERN INSTALLER 2026 • r6${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WebSocket • Dropbear • SlowDNS • Auto Recovery${N}        ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
 step(){ echo -e "\n${C3}${B}[$1]${N} ${C4}$2${N}"; }
 valid_port(){ [[ "$1" =~ ^[0-9]+$ ]] && ((1<=10#$1 && 10#$1<=65535)); }
 
 load_conf(){
   VPN_SSH_PORT=109; WS_PORTS="80,143,442,8080"; DROPBEAR_PORTS="443"; DEVICE_LIMIT_DEFAULT=1
-  WS_MAX_CLIENTS=2048; WS_IDLE_TIMEOUT=180; HOST_DOMAIN=""; SLOWDNS_ENABLED=0; NS_DOMAIN=""
+  WS_MAX_CLIENTS=2048; WS_IDLE_TIMEOUT=180; HOST_DOMAIN=""; SLOWDNS_ENABLED=0; NS_DOMAIN=""; WG_PORT=51820; SHARE_PORT=8880
   [[ -f $CONF ]] && source "$CONF" || true
   if [[ -z "$HOST_DOMAIN" && -f /etc/vps-domain.txt ]]; then
     HOST_DOMAIN=$(cat /etc/vps-domain.txt)
@@ -39,6 +39,8 @@ WS_IDLE_TIMEOUT=$WS_IDLE_TIMEOUT
 HOST_DOMAIN="$HOST_DOMAIN"
 SLOWDNS_ENABLED=$SLOWDNS_ENABLED
 NS_DOMAIN="$NS_DOMAIN"
+WG_PORT=$WG_PORT
+SHARE_PORT=$SHARE_PORT
 CONF_EOF
   chmod 600 "$CONF"; echo "$HOST_DOMAIN" > /etc/vps-domain.txt
 }
@@ -217,6 +219,71 @@ systemctl disable --now vpn-watchdog.service 2>/dev/null || true
 rm -f /etc/systemd/system/vpn-watchdog.service /usr/local/bin/vpn-watchdog.sh
 }
 
+write_wireguard(){
+ mkdir -p /etc/wireguard "$N4_DIR/wireguard/clients"; chmod 700 /etc/wireguard "$N4_DIR/wireguard" "$N4_DIR/wireguard/clients"
+ if [[ ! -s /etc/wireguard/server_private.key ]]; then umask 077; wg genkey >/etc/wireguard/server_private.key; wg pubkey </etc/wireguard/server_private.key >/etc/wireguard/server_public.key; fi
+ local priv iface; priv=$(cat /etc/wireguard/server_private.key); iface=$(ip route show default | awk '/default/{print $5;exit}')
+ cat >/etc/wireguard/wg0.conf <<EOF
+[Interface]
+Address = 10.66.66.1/24
+ListenPort = $WG_PORT
+PrivateKey = $priv
+PostUp = iptables -C FORWARD -i %i -j ACCEPT 2>/dev/null || iptables -A FORWARD -i %i -j ACCEPT; iptables -C FORWARD -o %i -j ACCEPT 2>/dev/null || iptables -A FORWARD -o %i -j ACCEPT; iptables -t nat -C POSTROUTING -s 10.66.66.0/24 -o $iface -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 10.66.66.0/24 -o $iface -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT 2>/dev/null || true; iptables -D FORWARD -o %i -j ACCEPT 2>/dev/null || true; iptables -t nat -D POSTROUTING -s 10.66.66.0/24 -o $iface -j MASQUERADE 2>/dev/null || true
+EOF
+ chmod 600 /etc/wireguard/wg0.conf /etc/wireguard/server_private.key
+}
+write_share(){
+ mkdir -p "$N4_DIR/shares"; chmod 700 "$N4_DIR/shares"
+ fetch_repo share-server.py /usr/local/bin/n4-share-server.py; chmod 755 /usr/local/bin/n4-share-server.py
+ id -u n4share >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin n4share
+ chown -R n4share:n4share "$N4_DIR/shares"
+ cat >/etc/systemd/system/n4-share.service <<'EOF'
+[Unit]
+Description=N4 private share server
+After=network-online.target
+[Service]
+User=n4share
+Group=n4share
+ExecStart=/usr/bin/python3 /usr/local/bin/n4-share-server.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/etc/n4vpn/shares
+ProtectHome=true
+[Install]
+WantedBy=multi-user.target
+EOF
+ cat >/usr/local/sbin/n4-cleanup <<'EOF'
+#!/usr/bin/env bash
+set -u
+N4=/etc/n4vpn; target=${1:-}; now=$(date +%s); changed=0
+for f in "$N4/shares"/*.json; do [[ -f $f ]]||continue; u=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("username",""))' "$f" 2>/dev/null||true); e=$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1])).get("expires_epoch",0)))' "$f" 2>/dev/null||echo 0); if [[ -n $target && $u == "$target" ]] || (( e<=now )); then rm -f "$f"; fi; done
+for m in "$N4/wireguard/clients"/*.meta; do [[ -f $m ]]||continue; . "$m"; if [[ -n $target && $PEER_NAME == "$target" ]]; then rm -f "$m" "$N4/wireguard/clients/$PEER_NAME.conf"; changed=1; continue; fi; exp=$(chage -l "$PEER_NAME" 2>/dev/null|awk -F': ' '/Account expires/{print $2}'); [[ -z $exp || $exp == never ]]&&continue; ep=$(date -d "$exp 23:59:59" +%s 2>/dev/null||echo 0); (( ep>0 && ep<=now ))&&{ rm -f "$m" "$N4/wireguard/clients/$PEER_NAME.conf"; changed=1; }; done
+((changed))&&/usr/local/bin/menu --rebuild-wg >/dev/null 2>&1||true
+EOF
+ chmod 755 /usr/local/sbin/n4-cleanup
+ cat >/etc/systemd/system/n4-cleanup.service <<'EOF'
+[Unit]
+Description=N4 expiry cleanup
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/n4-cleanup
+EOF
+ cat >/etc/systemd/system/n4-cleanup.timer <<'EOF'
+[Unit]
+Description=N4 expiry cleanup timer
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+}
+
 write_auto_menu(){
 cat > /etc/profile.d/n4-menu.sh <<'PROFILE_EOF'
 if [ "$(id -u 2>/dev/null)" = "0" ] && [ -t 0 ] && [ -t 1 ] && [ -z "${N4_MENU_ACTIVE:-}" ] && [ -x /usr/local/bin/menu ]; then
@@ -278,7 +345,7 @@ main(){
       ;;
   esac
   save_conf
-  step 5/8 "Installing packages and tuning"; apt-get update -y; apt-get install -y openssh-server dropbear python3 curl wget ca-certificates jq bc iproute2 net-tools lsof psmisc dnsutils procps openssl iptables iptables-persistent util-linux
+  step 5/8 "Installing packages and tuning"; apt-get update -y; apt-get install -y openssh-server dropbear python3 curl wget ca-certificates jq bc iproute2 net-tools lsof psmisc dnsutils procps openssl iptables iptables-persistent util-linux wireguard-tools qrencode
   cat >/etc/security/limits.d/99-n4vpn.conf <<'LIM_EOF'
 * soft nofile 262144
 * hard nofile 262144
@@ -294,20 +361,23 @@ net.ipv4.tcp_fin_timeout = 20
 net.ipv4.tcp_keepalive_time = 300
 net.ipv4.tcp_keepalive_intvl = 30
 net.ipv4.tcp_keepalive_probes = 5
+net.ipv4.ip_forward = 1
 SYS_EOF
   sysctl --system >/dev/null 2>&1 || true; ssh-keygen -A >/dev/null 2>&1 || true; /usr/sbin/sshd -t && { systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true; }
-  step 6/8 "Installing services"; systemctl disable --now ws-dropbear.service 2>/dev/null || true; rm -f /etc/systemd/system/ws-dropbear.service; touch /etc/shells; grep -qxF /bin/false /etc/shells || echo /bin/false >>/etc/shells; write_vpn_ssh; write_dropbear; write_slowdns; fetch_repo ws-proxy.py /usr/local/bin/ws-proxy.py; fetch_repo menu.sh /usr/local/bin/menu; chmod 755 /usr/local/bin/ws-proxy.py /usr/local/bin/menu; write_ws_unit; write_health; write_auto_menu
+  step 6/8 "Installing services"; systemctl disable --now ws-dropbear.service 2>/dev/null || true; rm -f /etc/systemd/system/ws-dropbear.service; touch /etc/shells; grep -qxF /bin/false /etc/shells || echo /bin/false >>/etc/shells; write_vpn_ssh; write_dropbear; write_slowdns; fetch_repo ws-proxy.py /usr/local/bin/ws-proxy.py; fetch_repo menu.sh /usr/local/bin/menu; chmod 755 /usr/local/bin/ws-proxy.py /usr/local/bin/menu; write_ws_unit; write_health; write_wireguard; write_share; write_auto_menu
   step 7/8 "Opening required local ports"
   protect_22
   allow_port "$VPN_SSH_PORT" tcp
   IFS=, read -ra a <<< "$WS_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done
   IFS=, read -ra a <<< "$DROPBEAR_PORTS"; for p in "${a[@]}"; do allow_port "$p" tcp; done
   if [[ $SLOWDNS_ENABLED -eq 1 ]]; then allow_port 53 udp; fi
+  allow_port "$WG_PORT" udp
+  allow_port "$SHARE_PORT" tcp
   iptables-save >/etc/iptables/rules.v4 2>/dev/null || true
 
   step 8/8 "Starting engines"
   systemctl daemon-reload
-  systemctl enable --now vpn-ssh ws-proxy dropbear n4-healthcheck.timer
+  systemctl enable --now vpn-ssh ws-proxy dropbear n4-healthcheck.timer wg-quick@wg0 n4-share n4-cleanup.timer
   if [[ $SLOWDNS_ENABLED -eq 1 ]]; then systemctl enable --now slowdns || true; fi
   systemctl restart vpn-ssh ws-proxy dropbear
   if [[ $SLOWDNS_ENABLED -eq 1 ]]; then systemctl restart slowdns || true; fi
@@ -319,6 +389,8 @@ SYS_EOF
   echo "VPN SSH: $VPN_SSH_PORT"
   echo "WebSocket: $WS_PORTS"
   echo "Dropbear: $DROPBEAR_PORTS"
+  echo "WireGuard: UDP/$WG_PORT"
+  echo "Private share: TCP/$SHARE_PORT"
   if [[ $SLOWDNS_ENABLED -eq 1 ]]; then echo "SlowDNS: UDP/53 • $NS_DOMAIN"; else echo "SlowDNS: disabled"; fi
   echo
   echo "Vultr Cloud Firewall must allow the same ports. Menu auto-opens on the next interactive root login."
