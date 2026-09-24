@@ -62,7 +62,7 @@ def esc(value):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "N4Share/2.0"
+    server_version = "N4Share/2.1"
 
     def log_message(self, fmt, *args):
         return
@@ -106,400 +106,111 @@ class Handler(BaseHTTPRequestHandler):
                 "text/plain; charset=utf-8",
             )
 
-        rows = []
+        cfg = read_conf()
 
-        fields = [
-            ("Host", "host"),
-            ("Username", "username"),
-            ("Password", "password"),
-            ("VPN SSH", "ssh_port"),
-            ("WebSocket", "ws_ports"),
-            ("Hybrid / Dropbear", "hybrid_port"),
-            ("Dropbear Ports", "dropbear_ports"),
-            ("SlowDNS NS", "slowdns_ns"),
-        ]
+        def pick(*keys):
+            for key in keys:
+                val = data.get(key)
+                if val not in (None, "", "disabled"):
+                    return str(val).strip()
+            for key in keys:
+                val = cfg.get(key)
+                if val not in (None, "", "disabled"):
+                    return str(val).strip()
+            return ""
 
-        for label, key in fields:
-            val = data.get(key)
-            if val not in (None, "", "disabled"):
-                rows.append(
-                    f"""
-                    <div class="item">
-                        <div class="item-top">
-                            <span class="label">{esc(label)}</span>
-                            <button class="copy" onclick="cp('{key}', this)">
-                                Copy
-                            </button>
-                        </div>
-                        <code id="{key}">{esc(val)}</code>
-                    </div>
-                    """
+        def public_key():
+            val = pick("slowdns_public_key", "slowdns_pubkey", "public_key",
+                       "SLOWDNS_PUBLIC_KEY", "SLOWDNS_PUBKEY")
+            if val:
+                return val
+            for p in (Path("/etc/n4vpn/server.pub"),
+                      Path("/etc/slowdns/server.pub"),
+                      Path("/root/server.pub")):
+                try:
+                    val = p.read_text(encoding="utf-8", errors="ignore").strip()
+                    if val:
+                        return val
+                except OSError:
+                    pass
+            return ""
+
+        host = pick("host", "HOST_DOMAIN", "SERVER_IP")
+        username = pick("username")
+        password = pick("password")
+        ns = pick("slowdns_ns", "SLOWDNS_NS")
+        pubkey = public_key()
+
+        ssh_port = pick("ssh_port", "VPN_SSH_PORT") or "109"
+        ws_ports = pick("ws_ports", "WS_PORTS") or "80,143,442,8080"
+        hybrid_port = pick("hybrid_port", "HYBRID_PORT") or "443"
+        dropbear_ports = pick("dropbear_ports", "DROPBEAR_PORTS") or hybrid_port
+
+        quick = []
+        for label, key, val in (
+            ("Host / IP", "host", host),
+            ("Username", "username", username),
+            ("Password", "password", password),
+            ("SlowDNS NS", "slowdns_ns", ns),
+            ("Public Key", "public_key", pubkey),
+        ):
+            if val:
+                quick.append(
+                    f'<div class="q"><div><span>{esc(label)}</span>'
+                    f'<code id="{key}">{esc(val)}</code></div>'
+                    f'<button class="copy" onclick="cp(\'{key}\',this)">Copy</button></div>'
                 )
 
+        details = "".join(
+            f'<div class="d"><span>{esc(label)}</span><b>{esc(val)}</b></div>'
+            for label, val in (
+                ("VPN SSH", ssh_port),
+                ("WebSocket", ws_ports),
+                ("Hybrid / Dropbear", hybrid_port),
+                ("Dropbear Ports", dropbear_ports),
+            ) if val
+        )
+
+        default_payload = "GET / HTTP/1.1[crlf]Host: [host][crlf]Connection: Upgrade[crlf]Upgrade: websocket[crlf][crlf]"
+        mec_payload = "PUT [host_port] [protocol][crlf]Host: www.mectel.com.mm[crlf][crlf]"
+
         body = f"""<!doctype html>
-<html lang="en">
-<head>
+<html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow,noarchive">
-<meta name="theme-color" content="#07090d">
+<meta name="theme-color" content="#080a0f">
 <title>N4 VPN</title>
-
 <style>
-:root {{
-    color-scheme: dark;
-    --bg: #06080c;
-    --panel: #0d1117;
-    --panel-2: #0a0e13;
-    --line: #1b2430;
-    --text: #f5f7fa;
-    --muted: #8894a3;
-    --accent: #ff334f;
-    --accent-soft: rgba(255, 51, 79, .10);
-    --green: #7ee6a2;
-}}
-
-* {{
-    box-sizing: border-box;
-    -webkit-tap-highlight-color: transparent;
-}}
-
-html, body {{
-    margin: 0;
-    min-height: 100%;
-    background:
-        radial-gradient(circle at top, rgba(255, 51, 79, .08), transparent 32%),
-        var(--bg);
-    color: var(--text);
-    font-family:
-        Inter,
-        ui-sans-serif,
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        Roboto,
-        Arial,
-        sans-serif;
-}}
-
-body {{
-    padding:
-        max(16px, env(safe-area-inset-top))
-        14px
-        max(20px, env(safe-area-inset-bottom));
-}}
-
-.wrap {{
-    width: 100%;
-    max-width: 520px;
-    margin: 0 auto;
-}}
-
-.card {{
-    overflow: hidden;
-    border: 1px solid var(--line);
-    border-radius: 22px;
-    background: rgba(13, 17, 23, .96);
-    box-shadow:
-        0 24px 60px rgba(0, 0, 0, .35),
-        inset 0 1px 0 rgba(255,255,255,.025);
-}}
-
-.head {{
-    padding: 20px 18px 16px;
-    border-bottom: 1px solid var(--line);
-}}
-
-.brand {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-}}
-
-.logo {{
-    display: flex;
-    align-items: center;
-    gap: 11px;
-    min-width: 0;
-}}
-
-.logo-mark {{
-    width: 42px;
-    height: 42px;
-    flex: 0 0 42px;
-    display: grid;
-    place-items: center;
-    border-radius: 13px;
-    background:
-        linear-gradient(145deg, #ff3c58, #a6001d);
-    box-shadow:
-        0 8px 24px rgba(255, 51, 79, .22),
-        inset 0 1px 0 rgba(255,255,255,.22);
-    font-weight: 900;
-    letter-spacing: -1.5px;
-    font-size: 17px;
-    color: white;
-}}
-
-.logo-text {{
-    min-width: 0;
-}}
-
-.logo-text strong {{
-    display: block;
-    font-size: 18px;
-    line-height: 1.1;
-    letter-spacing: -.3px;
-}}
-
-.logo-text span {{
-    display: block;
-    margin-top: 3px;
-    color: var(--muted);
-    font-size: 12px;
-}}
-
-.badge {{
-    flex: 0 0 auto;
-    padding: 7px 10px;
-    border: 1px solid rgba(255, 51, 79, .28);
-    border-radius: 999px;
-    background: var(--accent-soft);
-    color: #ff8ea0;
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: .8px;
-}}
-
-.meta {{
-    margin-top: 15px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    color: var(--muted);
-    font-size: 12px;
-}}
-
-.status {{
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-}}
-
-.dot {{
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--green);
-    box-shadow: 0 0 0 4px rgba(126, 230, 162, .08);
-}}
-
-.content {{
-    padding: 6px 18px 4px;
-}}
-
-.item {{
-    padding: 14px 0;
-    border-bottom: 1px solid var(--line);
-}}
-
-.item:last-child {{
-    border-bottom: 0;
-}}
-
-.item-top {{
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 8px;
-}}
-
-.label {{
-    color: #a8b2bf;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .2px;
-}}
-
-code {{
-    display: block;
-    width: 100%;
-    overflow-x: auto;
-    white-space: nowrap;
-    padding: 11px 12px;
-    border: 1px solid #202b37;
-    border-radius: 12px;
-    background: var(--panel-2);
-    color: var(--green);
-    font:
-        13px/1.35
-        ui-monospace,
-        SFMono-Regular,
-        Menlo,
-        Monaco,
-        Consolas,
-        monospace;
-    scrollbar-width: none;
-}}
-
-code::-webkit-scrollbar {{
-    display: none;
-}}
-
-.copy {{
-    border: 0;
-    border-radius: 9px;
-    padding: 7px 10px;
-    background: #171d26;
-    color: #dbe2ea;
-    font-size: 11px;
-    font-weight: 750;
-    cursor: pointer;
-    transition: .16s ease;
-}}
-
-.copy:active {{
-    transform: scale(.96);
-}}
-
-.copy.ok {{
-    background: rgba(126, 230, 162, .12);
-    color: var(--green);
-}}
-
-.foot {{
-    padding: 14px 18px 18px;
-    border-top: 1px solid var(--line);
-}}
-
-.note {{
-    display: flex;
-    gap: 9px;
-    align-items: flex-start;
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 1.5;
-}}
-
-.note-icon {{
-    color: var(--accent);
-    font-weight: 900;
-}}
-
-.n4 {{
-    margin-top: 16px;
-    text-align: center;
-    color: #596675;
-    font-size: 10px;
-    letter-spacing: .7px;
-}}
-
-@media (max-width: 380px) {{
-    body {{
-        padding-left: 10px;
-        padding-right: 10px;
-    }}
-
-    .head,
-    .content,
-    .foot {{
-        padding-left: 14px;
-        padding-right: 14px;
-    }}
-
-    .badge {{
-        padding: 6px 8px;
-        font-size: 9px;
-    }}
-
-    .logo-text strong {{
-        font-size: 17px;
-    }}
-}}
-</style>
-</head>
-
-<body>
-<div class="wrap">
-    <section class="card">
-
-        <header class="head">
-            <div class="brand">
-                <div class="logo">
-                    <div class="logo-mark">N4</div>
-                    <div class="logo-text">
-                        <strong>N4 VPN</strong>
-                        <span>Secure Access Details</span>
-                    </div>
-                </div>
-
-                <div class="badge">PRIVATE</div>
-            </div>
-
-            <div class="meta">
-                <span class="status">
-                    <span class="dot"></span>
-                    Active Account
-                </span>
-
-                <span>Expires {esc(data.get("expires_date", ""))}</span>
-            </div>
-        </header>
-
-        <main class="content">
-            {"".join(rows)}
-        </main>
-
-        <footer class="foot">
-            <div class="note">
-                <span class="note-icon">●</span>
-                <span>
-                    This private share link automatically expires with your account.
-                </span>
-            </div>
-        </footer>
-    </section>
-
-    <div class="n4">N4 NETWORK • {esc(N4_VERSION)}</div>
-</div>
-
+:root{{color-scheme:dark;--bg:#07090d;--card:#0d1117;--line:#202833;--muted:#8b96a5;--green:#7de5a0;--red:#ff304f;--blue:#8ec8ff}}
+*{{box-sizing:border-box;-webkit-tap-highlight-color:transparent}}
+html,body{{margin:0;min-height:100%;background:radial-gradient(circle at top,rgba(255,48,79,.08),transparent 30%),var(--bg);color:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}}
+body{{padding:max(10px,env(safe-area-inset-top)) 10px max(12px,env(safe-area-inset-bottom))}}
+.wrap{{max-width:560px;margin:auto}}.card{{background:rgba(13,17,23,.97);border:1px solid var(--line);border-radius:20px;overflow:hidden;box-shadow:0 18px 45px #0007}}
+.head{{padding:13px 14px 11px;border-bottom:1px solid var(--line)}}.brand{{display:flex;justify-content:space-between;align-items:center;gap:10px}}.bl{{display:flex;align-items:center;gap:9px}}
+.logo{{width:36px;height:36px;border-radius:11px;display:grid;place-items:center;background:linear-gradient(145deg,#ff405c,#b50022);font-weight:900;box-shadow:0 7px 20px rgba(255,48,79,.22)}}
+.name strong{{display:block;font-size:16px}}.name small{{color:var(--muted);font-size:10px}}.badge{{font-size:9px;font-weight:850;letter-spacing:.8px;color:#ff8da0;border:1px solid rgba(255,48,79,.28);background:rgba(255,48,79,.08);padding:5px 8px;border-radius:999px}}
+.meta{{margin-top:9px;display:flex;justify-content:space-between;color:var(--muted);font-size:10px}}.active{{color:var(--green)}}
+.sec{{padding:10px 12px;border-bottom:1px solid var(--line)}}.st{{font-size:9px;font-weight:850;letter-spacing:1px;color:#aab4c0;margin-bottom:7px}}
+.quick{{display:grid;grid-template-columns:1fr 1fr;gap:6px}}.q{{min-width:0;display:flex;align-items:center;gap:6px;background:#090d12;border:1px solid #202a35;border-radius:10px;padding:7px 8px}}.q>div{{min-width:0;flex:1}}.q span{{display:block;color:var(--muted);font-size:8px;margin-bottom:3px}}.q code{{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--green);font:11px ui-monospace,monospace}}
+.copy{{border:0;border-radius:7px;padding:6px 7px;background:#171e27;color:#e4eaf0;font-size:8px;font-weight:850}}.copy.ok{{color:var(--green);background:rgba(125,229,160,.12)}}
+.details{{display:grid;grid-template-columns:1fr 1fr;gap:6px}}.d{{background:#090d12;border:1px solid #202a35;border-radius:10px;padding:7px 8px}}.d span{{display:block;color:var(--muted);font-size:8px;margin-bottom:3px}}.d b{{font-size:10px;font-weight:750;word-break:break-word}}
+.payloads{{display:grid;grid-template-columns:1fr 1fr;gap:6px}}.p{{min-width:0;background:#090d12;border:1px solid #202a35;border-radius:10px;padding:7px 8px}}.pt{{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}}.pt span{{font-size:9px;font-weight:850}}.p code{{display:block;height:43px;overflow:auto;word-break:break-word;white-space:normal;color:var(--blue);font:8.5px/1.35 ui-monospace,monospace;scrollbar-width:none}}.p code::-webkit-scrollbar{{display:none}}
+.foot{{padding:8px 12px 10px;display:flex;justify-content:space-between;gap:8px;color:#65717f;font-size:8px}}
+@media(max-width:370px){{.quick{{grid-template-columns:1fr}}.payloads{{grid-template-columns:1fr}}}}
+</style></head><body><div class="wrap"><section class="card">
+<header class="head"><div class="brand"><div class="bl"><div class="logo">N4</div><div class="name"><strong>N4 VPN</strong><small>Connection Details</small></div></div><div class="badge">PRIVATE</div></div><div class="meta"><span class="active">● Active</span><span>Expires {esc(data.get("expires_date",""))}</span></div></header>
+<section class="sec"><div class="st">QUICK COPY</div><div class="quick">{''.join(quick)}</div></section>
+<section class="sec"><div class="st">SERVICE DETAILS</div><div class="details">{details}</div></section>
+<section class="sec"><div class="st">PAYLOADS</div><div class="payloads">
+<div class="p"><div class="pt"><span>DEFAULT</span><button class="copy" onclick="cp('default_payload',this)">Copy</button></div><code id="default_payload">{esc(default_payload)}</code></div>
+<div class="p"><div class="pt"><span>MEC</span><button class="copy" onclick="cp('mec_payload',this)">Copy</button></div><code id="mec_payload">{esc(mec_payload)}</code></div>
+</div></section>
+<footer class="foot"><span>N4 NETWORK • {esc(N4_VERSION)}</span><span>Auto expires with account</span></footer>
+</section></div>
 <script>
-async function cp(id, btn) {{
-    const el = document.getElementById(id);
-    const text = el.textContent;
-
-    try {{
-        await navigator.clipboard.writeText(text);
-    }} catch (_) {{
-        const area = document.createElement("textarea");
-        area.value = text;
-        area.style.position = "fixed";
-        area.style.opacity = "0";
-        document.body.appendChild(area);
-        area.focus();
-        area.select();
-        document.execCommand("copy");
-        area.remove();
-    }}
-
-    const old = btn.textContent;
-    btn.textContent = "Copied";
-    btn.classList.add("ok");
-
-    setTimeout(() => {{
-        btn.textContent = old;
-        btn.classList.remove("ok");
-    }}, 1100);
-}}
-</script>
-
-</body>
-</html>
-"""
+async function cp(id,b){{const e=document.getElementById(id),t=e.textContent;try{{await navigator.clipboard.writeText(t)}}catch(_){{const a=document.createElement("textarea");a.value=t;a.style.position="fixed";a.style.opacity="0";document.body.appendChild(a);a.select();document.execCommand("copy");a.remove()}}const o=b.textContent;b.textContent="OK";b.classList.add("ok");setTimeout(()=>{{b.textContent=o;b.classList.remove("ok")}},850)}}
+</script></body></html>"""
 
         self.send_bytes(200, body)
 
