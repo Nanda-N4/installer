@@ -4,7 +4,7 @@ export DEBIAN_FRONTEND=noninteractive UCF_FORCE_CONFFOLD=1
 REPO_RAW="https://raw.githubusercontent.com/Nanda-N4/installer/main"
 N4_DIR=/etc/n4vpn; CONF=$N4_DIR/n4.conf
 C1='\033[38;5;51m'; C2='\033[38;5;48m'; C3='\033[38;5;220m'; C4='\033[38;5;231m'; C5='\033[38;5;244m'; CR='\033[38;5;196m'; B='\033[1m'; N='\033[0m'
-trap 'echo -e "${CR}[!] Failed at line $LINENO${N}"' ERR
+trap 'rc=$?; echo -e "${CR}[!] Failed at line $LINENO (exit $rc): ${BASH_COMMAND}${N}"' ERR
 [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }
 
 logo(){ clear; echo -e "${C1}╭────────────────────────────────────────────────────────────╮${N}"; echo -e "${C1}│${N} ${B}${C4}N4 VPN • MODERN INSTALLER 2026${N}                          ${C1}│${N}"; echo -e "${C1}│${N} ${C5}SSH • WebSocket • Dropbear • SlowDNS • Auto Recovery${N}        ${C1}│${N}"; echo -e "${C1}╰────────────────────────────────────────────────────────────╯${N}"; }
@@ -16,7 +16,10 @@ load_conf(){
   VPN_SSH_PORT=109; WS_PORTS="80,143,442,8080"; DROPBEAR_PORTS="443"; DEVICE_LIMIT_DEFAULT=1
   WS_MAX_CLIENTS=2048; WS_IDLE_TIMEOUT=180; HOST_DOMAIN=""; SLOWDNS_ENABLED=0; NS_DOMAIN=""
   [[ -f $CONF ]] && source "$CONF" || true
-  [[ -z "$HOST_DOMAIN" && -f /etc/vps-domain.txt ]] && HOST_DOMAIN=$(cat /etc/vps-domain.txt)
+  if [[ -z "$HOST_DOMAIN" && -f /etc/vps-domain.txt ]]; then
+    HOST_DOMAIN=$(cat /etc/vps-domain.txt)
+  fi
+  return 0
 }
 save_conf(){
   mkdir -p "$N4_DIR/device-limits" /var/log/n4vpn
